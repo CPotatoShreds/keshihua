@@ -1,0 +1,2 @@
+import {useEffect,useRef,useState} from 'react';
+export function useSize(){const ref=useRef(null),[size,setSize]=useState({width:900,height:260});useEffect(()=>{const observer=new ResizeObserver(([e])=>{const {width,height}=e.contentRect;setSize(s=>s.width===width&&s.height===height?s:{width:Math.max(1,width),height:Math.max(1,height)});});if(ref.current)observer.observe(ref.current);return()=>observer.disconnect();},[]);return [ref,size];}

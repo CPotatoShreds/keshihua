@@ -35,13 +35,12 @@ export function BubbleMap({topics,values,time,onOpen,running=true,cameraScope=''
  {inside?<><text textAnchor="middle" fontSize={font/camera.k} fill="#fff" fontWeight="600">{lines.map((line,i)=><tspan key={i} x="0" y={(i-(lines.length-1)/2)*font/camera.k}>{line}</tspan>)}</text>{screenR>52&&<text textAnchor="middle" y={(lines.length*font/2+14)/camera.k} fontSize={11/camera.k} fill="#ffffffd9">{number(v)}</text>}</>:screenR>16&&<text textAnchor="middle" y={r+18/camera.k} fontSize={11/camera.k} fill="#435e70" stroke="#fff" strokeWidth={3/camera.k} paintOrder="stroke">{name}</text>}
  <title>{q.title} · {Math.round(v).toLocaleString()}</title></g></g>;
  })}</g></svg>
- <div className="canvas-caption"><span>面积 ∝ 曝光率</span><small>拖动画布 · 滚轮或双指缩放</small></div>
  <div className="canvas-controls"><button aria-label="缩小气泡画布" onClick={()=>zoom(1/1.4)}>−</button><span>{Math.round(camera.k*100)}%</span><button aria-label="放大气泡画布" onClick={()=>zoom(1.4)}>+</button><button onClick={()=>setCamera(fitCamera(nodes,w,h))}>查看全貌</button><button aria-label="重置气泡比例尺" onClick={()=>setCamera({k:1,x:w/2,y:h/2})}>1:1</button></div>
  {hovered&&<div className="bubble-info"><i style={{background:hovered.color}}/><strong>{hovered.title}</strong><span>{number(values[hovered.id]?.views||0)}</span></div>}
  </div>;
 }
 
-export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='traffic',topic=null,windowKey='m5',metric='count',selected=null,onSelect,events=[],empty=false}){
+export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='traffic',topic=null,windowKey='m5',metric='count',selected=null,onSelect,events=[],empty=false,wheelZoom=false}){
  const [ref,{width:w,height:h}]=useSize(),clip=useId(),[probe,setProbe]=useState(null),drag=useRef(null),wheelRef=useRef(null);
  const left=58,right=20,top=14,bottom=31,pw=Math.max(20,w-left-right),ph=Math.max(50,h-top-bottom);
  const resolution=Math.max(STEP,span/Math.max(100,Math.floor(pw/3))),anchor=Math.ceil(end/resolution)*resolution,start=anchor-span,offset=(end-anchor)*pw/span;
@@ -60,7 +59,7 @@ export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='
  const {ymax}=geometry,x=t=>left+(t-(end-span))/span*pw,y=v=>top+ph-v/ymax*ph;
  const point=e=>{const rect=ref.current.getBoundingClientRect(),px=Math.max(left,Math.min(w-right,e.clientX-rect.left)),py=e.clientY-rect.top;return {px,py,t:end-span+(px-left)/pw*span};};
  const hit=p=>{if(empty)return {...p,index:-1,values:[],sum:0};const amounts=kind==='opinion'?valuesAt(topic,p.t).counts[windowKey]:series.map(s=>read(s,p.t)),sum=amounts.reduce((a,b)=>a+b,0);let base=kind==='opinion'?(ymax-(metric==='share'&&sum?100:sum))/2:0,index=-1;amounts.forEach((v,j)=>{const high=base+(kind==='opinion'&&metric==='share'?(sum?v/sum*100:0):v);if(p.py>=y(high)&&p.py<=y(base)&&v>0)index=j;base=high;});return {...p,index,values:amounts,sum};};
- wheelRef.current=e=>{if(e.ctrlKey||e.metaKey){e.preventDefault();onZoom?.(span*Math.exp(e.deltaY*.003),point(e).t);}else{const dx=Math.abs(e.deltaX)>0?e.deltaX:e.shiftKey?e.deltaY:0;if(dx){e.preventDefault();onPan(end+dx/pw*span);}}};
+ wheelRef.current=e=>{if(e.ctrlKey||e.metaKey||(wheelZoom&&!e.shiftKey&&Math.abs(e.deltaX)<=Math.abs(e.deltaY))){e.preventDefault();onZoom?.(span*Math.exp(e.deltaY*.003),point(e).t);}else{const dx=Math.abs(e.deltaX)>0?e.deltaX:e.shiftKey?e.deltaY:0;if(dx){e.preventDefault();onPan(end+dx/pw*span);}}};
  useEffect(()=>{const el=ref.current,handler=e=>wheelRef.current(e);el.addEventListener('wheel',handler,{passive:false});return()=>el.removeEventListener('wheel',handler);},[]);
  const down=e=>{if(e.button!==0)return;const p=hit(point(e));drag.current={x:p.px,end,pan:e.shiftKey||e.altKey};e.currentTarget.setPointerCapture(e.pointerId);if(!drag.current.pan){onSeek(p.t);if(kind==='opinion'&&p.index>=0)onSelect?.(series[p.index].index);}};
  const move=e=>{const p=point(e),d=drag.current;if(d){if(d.pan)onPan(d.end-(p.px-d.x)/pw*span);else onSeek(p.t);}setProbe(hit(p));};

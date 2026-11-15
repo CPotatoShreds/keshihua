@@ -29,10 +29,10 @@ test('duplicate and out-of-order packets cannot double count or rewind live edge
 test('all views interpolate the same two source samples, including a topic birth',()=>{
  const t=q.bornAt,a=frameAt(t/STEP),b=frameAt(t/STEP+1),s=sampleAt([a,b],t+STEP/2),v=s.values[q.id];assert.equal(v.views,((a.values[q.id]?.views||0)+b.values[q.id].views)/2);for(const k of ['m5','h1'])for(let j=0;j<5;j++)assert.equal(v.counts[k][j],((a.values[q.id]?.counts[k][j]||0)+b.values[q.id].counts[k][j])/2);
 });
-test('pause, playback speed, catch-up and retention boundaries',()=>{
- const p={time:100000,mode:'paused',speed:4};assert.deepEqual(stepPlayer(p,10000,200000,0),p);assert.equal(stepPlayer(p,10000,200000,120000).time,120000);let a={...p,mode:'playing'},b=a;for(let i=0;i<60;i++)a=stepPlayer(a,1000/60,300000,0);for(let i=0;i<30;i++)b=stepPlayer(b,1000/30,300000,0);assert.ok(Math.abs(a.time-b.time)<1e-6);assert.deepEqual(stepPlayer({...p,mode:'playing'},1000,102000,0),{time:102000,mode:'live',speed:1});
+test('a selected moment stays fixed while live mode follows the edge and retention boundary',()=>{
+ const p={time:100000,mode:'manual'};assert.equal(stepPlayer(p,200000,0).time,100000);assert.equal(stepPlayer(p,200000,120000).time,120000);assert.deepEqual(stepPlayer({time:100000,mode:'live'},200000,0),{time:200000,mode:'live'});
 });
-test('viewport stays separate from playback and clamps at available history',()=>{assert.equal(clampViewport(400,100,0,1000),400);assert.equal(clampViewport(400,100,0,1100),400);assert.equal(clampViewport(20,100,0,1000),100);assert.equal(clampViewport(1100,100,0,1000),1000);});
+test('viewport stays separate from the selected moment and clamps at available history',()=>{assert.equal(clampViewport(400,100,0,1000),400);assert.equal(clampViewport(400,100,0,1100),400);assert.equal(clampViewport(20,100,0,1000),100);assert.equal(clampViewport(1100,100,0,1000),1000);});
 test('search and word filtering follow the selected topic and opinion',()=>{
  const q=templates[0],words=wordsFor(q,[100,50,25,10,5],0);assert.ok(matching(q,'音乐节 补偿'));assert.ok(!matching(q,'不存在'));assert.ok(words.every(w=>q.clusters[0].words.includes(w.word)));assert.equal(words.length,3);assert.equal(wordsFor(q,[0,0,0,0,0]).length,0);
 });

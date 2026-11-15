@@ -32,11 +32,9 @@ export function detailViewport(bornAt,time,oldest,latest,range='auto',fixed=null
 export function wordsFor(topic,counts,selected=null){
  const map=new Map();topic.clusters.forEach((c,j)=>{if(selected!==null&&selected!==j)return;c.words.forEach((word,k)=>{const value=counts[j]*(.62-k*.13);if(value<.5)return;const old=map.get(word);map.set(word,{word,value:value+(old?.value||0),cluster:j,color:c.color});});});return [...map.values()].sort((a,b)=>b.value-a.value);
 }
-export function stepPlayer(state,elapsed,edge,oldest){
- if(state.mode==='live')return {...state,time:edge,speed:1};
- if(state.mode==='paused')return {...state,time:Math.max(oldest,state.time)};
- const time=Math.max(oldest,state.time+elapsed*state.speed);
- return time>=edge?{time:edge,mode:'live',speed:1}:{...state,time};
+export function stepPlayer(state,edge,oldest){
+ if(state.mode==='live')return {...state,time:edge};
+ return {...state,time:Math.max(oldest,state.time)};
 }
 export function useFeed(){
  const [data,setData]=useState(null),[status,setStatus]=useState('loading'),[retry,setRetry]=useState(0);
@@ -52,10 +50,10 @@ export function useFeed(){
  },[retry]);return {data,status,retry:()=>setRetry(n=>n+1)};
 }
 export function usePlayer(data){
- const [state,setState]=useState({time:0,mode:'live',speed:1}),ref=useRef(state),feed=useRef(data);feed.current=data;
+ const [state,setState]=useState({time:0,mode:'live'}),ref=useRef(state),feed=useRef(data);feed.current=data;
  const update=next=>{ref.current=typeof next==='function'?next(ref.current):next;setState(ref.current);};
- useEffect(()=>{let id,last=null;function frame(now){const d=feed.current;if(d?.frames.length){const edge=d.frames.at(-1).time-STEP+Math.min(STEP,Math.max(0,now-d.receivedAt));const elapsed=last===null||document.hidden?0:now-last;const next={...stepPlayer(ref.current,elapsed,edge,d.frames[0].time),edge};if(next.time!==ref.current.time||next.mode!==ref.current.mode||next.edge!==ref.current.edge){ref.current=next;setState(next);}}last=document.hidden?null:now;id=requestAnimationFrame(frame);}id=requestAnimationFrame(frame);return()=>cancelAnimationFrame(id);},[]);
- return {...state,pause:()=>update(s=>({...s,mode:'paused'})),toggle:()=>update(s=>({...s,mode:s.mode==='paused'?'playing':'paused'})),seek:t=>update(s=>({...s,time:Math.max(data.frames[0].time,Math.min(t,ref.current.edge||data.frames.at(-1).time)),mode:'paused'})),live:()=>update(s=>({...s,time:s.edge||s.time,mode:'live',speed:1})),rate:speed=>update(s=>({...s,speed}))};
+ useEffect(()=>{let id;function frame(now){const d=feed.current;if(d?.frames.length){const edge=d.frames.at(-1).time-STEP+Math.min(STEP,Math.max(0,now-d.receivedAt));const next={...stepPlayer(ref.current,edge,d.frames[0].time),edge};if(next.time!==ref.current.time||next.mode!==ref.current.mode||next.edge!==ref.current.edge){ref.current=next;setState(next);}}id=requestAnimationFrame(frame);}id=requestAnimationFrame(frame);return()=>cancelAnimationFrame(id);},[]);
+ return {...state,seek:t=>update(s=>({...s,time:Math.max(data.frames[0].time,Math.min(t,ref.current.edge||data.frames.at(-1).time)),mode:'manual'})),live:()=>update(s=>({...s,time:s.edge||s.time,mode:'live'}))};
 }
 const clock=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const minute=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit'});

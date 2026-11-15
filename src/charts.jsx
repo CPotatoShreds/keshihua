@@ -5,16 +5,23 @@ import {rateAt,aggregate,valuesAt} from '../shared/lifecycle.js';
 import {EMPTY,sampleAt,formatTime,formatClock,formatDateTime,formatAxis,number,wordsFor} from './live';
 import {useSize} from './useSize';
 import {cloudLayout} from './spatial-layout';
-import {radiusFor,worldLayout,zoomAt,fitCamera} from './bubble-world';
+import {radiusFor,worldLayout,packTopics,leaderLabels,zoomAt,fitCamera} from './bubble-world';
+import {BubbleInflux} from './bubble-effects';
 
-export function BubbleMap({topics,values,time,onOpen,running=true,cameraScope=''}){
+export function BubbleMap({topics,values,time,onOpen,cameraScope='',live=false}){
  const [ref,{width:w,height:h}]=useSize(),[hover,setHover]=useState(null),[camera,setCamera]=useState({x:0,y:0,k:.55});
  const state=useRef({nodes:new Map(),time:0,now:0,centered:false,scope:cameraScope}),gesture=useRef(new Map()),drag=useRef(null),wheel=useRef(null);
+ const packing=useRef({items:[],aspect:0,targets:[]}),[reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
+ useEffect(()=>{const m=matchMedia('(prefers-reduced-motion: reduce)'),f=()=>setReduced(m.matches);m.addEventListener('change',f);return()=>m.removeEventListener('change',f);},[]);
  const now=performance.now(),dt=Math.max(0,Math.min(50,now-(state.current.now||now)));state.current.now=now;
  const scopeChanged=state.current.scope!==cameraScope,reset=Math.abs(time-state.current.time)>3600000||scopeChanged;
- const nodes=worldLayout(topics.map(q=>({...q,r:radiusFor(values[q.id]?.views||0)})),reset?new Map():state.current.nodes,reset?1:running?1-Math.exp(-Math.max(8,dt)/80):1);
+ const items=topics.map(q=>({...q,r:radiusFor(values[q.id]?.views||0)})),aspect=Math.max(1,w-150)/Math.max(1,h-160);
+ const changed=reset||Math.abs(packing.current.aspect-aspect)>.08||items.length!==packing.current.items.length||items.some(q=>{const old=packing.current.items.find(n=>n.id===q.id);return !old||Math.abs(old.r-q.r)>Math.max(2,q.r*.04);});
+ if(changed)packing.current={items,aspect,targets:packTopics(items,aspect)};
+ const nodes=worldLayout(items,reset?new Map():state.current.nodes,reset?1:1-Math.exp(-Math.max(8,dt)/250),aspect,packing.current.targets);
+
  state.current.nodes=new Map(nodes.map(n=>[n.id,n]));state.current.time=time;state.current.scope=cameraScope;
- useEffect(()=>{if(w>0&&h>0&&!state.current.centered){setCamera(fitCamera(nodes,ref.current.clientWidth,ref.current.clientHeight));state.current.centered=true;}},[w,h]);
+ useEffect(()=>{if(w>0&&h>0){setCamera(fitCamera(packing.current.targets,ref.current.clientWidth,ref.current.clientHeight));state.current.centered=true;}},[w,h]);
  useEffect(()=>{if(scopeChanged&&w>0&&h>0)setCamera(fitCamera(nodes,w,h));},[cameraScope,w,h]);
  const local=e=>{const b=ref.current.getBoundingClientRect();return {x:e.clientX-b.left,y:e.clientY-b.top};};
  wheel.current=e=>{e.preventDefault();const p=local(e);setCamera(c=>zoomAt(c,p,Math.exp(-e.deltaY*.002)));};
@@ -28,13 +35,18 @@ export function BubbleMap({topics,values,time,onOpen,running=true,cameraScope=''
  <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.k})`}>{nodes.map(q=>{
  const v=values[q.id]?.views||0,r=q.r,screenR=r*camera.k,name=q.title.split(' · ')[0];
  const font=Math.min(20,Math.max(12,screenR*.25)),lineLength=Math.max(3,Math.floor(screenR*1.55/font)),lines=name.match(new RegExp(`.{1,${lineLength}}`,'g'))||[name];
- const inside=screenR>=40&&lines.length*font<=screenR*1.3;
+ const inside=screenR>=44;
  return <g key={q.id} transform={`translate(${q.x} ${q.y})`}>
  <g className="topic-bubble" role="button" tabIndex="0" aria-label={`${q.title}，${number(v)}，查看详情`} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(q.id);}}} onPointerEnter={()=>setHover(q.id)} onPointerLeave={()=>setHover(null)} onFocus={()=>setHover(q.id)} onBlur={()=>setHover(null)}>
  <circle r={r} fill={q.color} data-flow={v} data-radius={r}/><circle r={Math.max(r,8/camera.k)} fill="transparent" stroke="none"/>
- {inside?<><text textAnchor="middle" fontSize={font/camera.k} fill="#fff" fontWeight="600">{lines.map((line,i)=><tspan key={i} x="0" y={(i-(lines.length-1)/2)*font/camera.k}>{line}</tspan>)}</text>{screenR>52&&<text textAnchor="middle" y={(lines.length*font/2+14)/camera.k} fontSize={11/camera.k} fill="#ffffffd9">{number(v)}</text>}</>:screenR>16&&<text textAnchor="middle" y={r+18/camera.k} fontSize={11/camera.k} fill="#435e70" stroke="#fff" strokeWidth={3/camera.k} paintOrder="stroke">{name}</text>}
+ {inside?<><text textAnchor="middle" fontSize={font/camera.k} fill="#fff" fontWeight="600">{lines.map((line,i)=><tspan key={i} x="0" y={(i-(lines.length-1)/2)*font*1.25/camera.k}>{line}</tspan>)}</text>{screenR>52&&<text textAnchor="middle" y={(lines.length*font*.625+16)/camera.k} fontSize={11/camera.k} fill="#ffffffd9">{number(v)}</text>}</>:null}
  <title>{q.title} · {Math.round(v).toLocaleString()}</title></g></g>;
- })}</g></svg>
+ })}</g>
+ {leaderLabels(nodes.map(n=>({...n,x:n.x*camera.k+camera.x,y:n.y*camera.k+camera.y,r:n.r*camera.k})),w,h).map(l=><g key={l.id} className="bubble-label" role="button" tabIndex="0" aria-label={'查看'+l.title} onPointerDown={e=>e.stopPropagation()} onPointerUp={e=>e.stopPropagation()} onClick={()=>onOpen(l.id)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(l.id);}}}>
+ <path d={`M${l.sx},${l.sy} L${l.ex},${l.ey} L${l.side>0?l.x+l.width:l.x},${l.ey}`} fill="none" stroke={l.color} strokeWidth="1"/>
+ <circle cx={l.sx} cy={l.sy} r="2" fill={l.color}/><rect x={l.x} y={l.y} width={l.width} height="24" rx="5" fill="#f8fafbee"/><text x={l.x+8} y={l.y+16} fontSize="11" fill="#385b6d">{l.title}</text></g>)}
+ </svg>
+ <BubbleInflux nodes={nodes.map(n=>({...n,x:n.x*camera.k+camera.x,y:n.y*camera.k+camera.y,r:n.r*camera.k}))} width={w} height={h} enabled={live&&!reduced}/>
  <div className="canvas-controls"><button aria-label="缩小气泡画布" onClick={()=>zoom(1/1.4)}>−</button><span>{Math.round(camera.k*100)}%</span><button aria-label="放大气泡画布" onClick={()=>zoom(1.4)}>+</button><button onClick={()=>setCamera(fitCamera(nodes,w,h))}>查看全貌</button><button aria-label="重置气泡比例尺" onClick={()=>setCamera({k:1,x:w/2,y:h/2})}>1:1</button></div>
  {hovered&&<div className="bubble-info"><i style={{background:hovered.color}}/><strong>{hovered.title}</strong><span>{number(values[hovered.id]?.views||0)}</span></div>}
  </div>;

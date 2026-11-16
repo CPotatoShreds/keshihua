@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {radiusFor,worldLayout,zoomAt,fitCamera} from '../src/bubble-world.js';
+import {radiusFor,worldLayout,anchorTopics,footprintRadius,labelRails,zoomAt,fitCamera} from '../src/bubble-world.js';
 test('circle area preserves exposure ratios without minimums or caps',()=>{assert.equal(radiusFor(0),0);assert.ok(Math.abs(radiusFor(1e7)**2/radiusFor(2e6)**2-5)<1e-10);assert.equal(radiusFor(100000),100);assert.equal(radiusFor(400000),200);assert.ok(radiusFor(1e9)>1000);});
 test('camera preserves cursor world position and relative radii',()=>{const c={k:.5,x:120,y:90},p={x:400,y:220},n=zoomAt(c,p,2);assert.equal((p.x-c.x)/c.k,(p.x-n.x)/n.k);assert.equal((p.y-c.y)/c.k,(p.y-n.y)/n.k);const nodes=worldLayout([{id:'a',r:1000},{id:'b',r:25},{id:'c',r:100}]);const f=fitCamera(nodes,800,400);assert.ok(f.k<1);assert.equal(nodes[0].r*f.k/(nodes[1].r*f.k),40);assert.ok(Math.hypot(nodes[0].x-nodes[1].x,nodes[0].y-nodes[1].y)>=1025);});
 
@@ -17,13 +17,45 @@ test('packing follows viewport aspect without changing bubble sizes',async()=>{
  const camera=fitCamera(wide,1440,650);
  for(const n of wide){assert.ok((n.x-n.r)*camera.k+camera.x>=0);assert.ok((n.x+n.r)*camera.k+camera.x<=1440);assert.ok((n.y-n.r)*camera.k+camera.y>=0);assert.ok((n.y+n.r)*camera.k+camera.y<=650);}
 });
-test('small bubble callouts avoid circles and each other',async()=>{
+test('side bookmark cards avoid the plot and each other',async()=>{
  const {leaderLabels}=await import('../src/bubble-world.js');
- const nodes=[{id:'large',x:440,y:260,r:145,title:'主体'},{id:'a',x:220,y:170,r:20,title:'城市屋顶菜园'},{id:'b',x:200,y:270,r:15,title:'地铁站无障碍指引'},{id:'c',x:700,y:300,r:25,title:'老电影院重新开门'}];
+ const nodes=[{id:'large',x:440,y:260,r:145,title:'主体'},{id:'a',x:280,y:170,r:20,title:'城市屋顶菜园'},{id:'b',x:280,y:270,r:15,title:'地铁站无障碍指引'},{id:'c',x:700,y:300,r:25,title:'老电影院重新开门'}];
  const labels=leaderLabels(nodes,1000,600);assert.equal(labels.length,3);
+ for(const l of labels){const rail=labelRails(1000);assert.equal(l.x,l.side<0?rail.margin:1000-rail.margin-rail.width);assert.equal(Math.abs(l.ex-l.endX),30);assert.ok(l.lines.length<=2);}
+
  for(const l of labels){
   const host=nodes.find(n=>n.id===l.id);assert.ok(Math.abs(Math.hypot(l.sx-host.x,l.sy-host.y)-host.r)<1e-8);
-  for(const n of nodes){const x=Math.max(l.x,Math.min(l.x+l.width,n.x)),y=Math.max(l.y,Math.min(l.y+24,n.y));assert.ok(Math.hypot(x-n.x,y-n.y)>=n.r+7);}
-  for(const other of labels)if(l.id!==other.id)assert.ok(l.x+l.width<=other.x||other.x+other.width<=l.x||l.y+24<=other.y||other.y+24<=l.y);
+  for(const n of nodes){const x=Math.max(l.x,Math.min(l.x+l.width,n.x)),y=Math.max(l.y,Math.min(l.y+l.height,n.y));assert.ok(Math.hypot(x-n.x,y-n.y)>=n.r+7);}
+  for(const other of labels)if(l.id!==other.id)assert.ok(l.x+l.width<=other.x||other.x+other.width<=l.x||l.y+l.height<=other.y||other.y+other.height<=l.y);
+ }
+});
+
+test('scrubbing changes radius but never existing centers, including disappearance and rebirth',()=>{
+ const initial=[{id:'a',r:300,bornAt:0,endsAt:20},{id:'b',r:100,bornAt:1,endsAt:10}];
+ const anchors=anchorTopics(initial,new Map(),2);
+ const before=worldLayout(initial,anchors);
+ for(const radii of [[10,200],[500,2],[1,1]]){
+  const after=worldLayout(initial.map((n,i)=>({...n,r:radii[i]})),anchors);
+  for(let i=0;i<2;i++){assert.equal(after[i].x,before[i].x);assert.equal(after[i].y,before[i].y);assert.equal(after[i].r,radii[i]);}
+ }
+ const next=anchorTopics([{id:'c',r:150,bornAt:5,endsAt:15}],anchors,2);
+ assert.deepEqual(next.get('a'),anchors.get('a'));assert.deepEqual(next.get('b'),anchors.get('b'));
+ assert.equal(worldLayout([initial[1]],next)[0].x,before[1].x);
+ const reuse=anchorTopics([{id:'d',r:80,bornAt:25,endsAt:30}],next,2).get('d');
+ assert.equal(reuse.x,0);assert.equal(reuse.y,0);
+});
+test('reserved footprint bounds mock lifecycle rates without flattening displayed size',async()=>{
+ const {makePulses,rateAt}=await import('../shared/lifecycle.js');
+ for(let j=0;j<5;j++){
+  const q={bornAt:0,endsAt:100000,pulses:makePulses(0,100000,1000000,j)},r=footprintRadius(q);
+  for(let i=0;i<=1000;i++)assert.ok(radiusFor(rateAt(q,i*100))<=r+1e-8);
+ }
+});
+test('bookmark rows are stable across size-threshold changes and fit narrow screens',async()=>{
+ const {leaderLabels}=await import('../src/bubble-world.js');
+ for(const w of [390,768,1440]){
+  const nodes=[{id:'a',x:w*.4,y:180,r:12,title:'小话题'},{id:'b',x:w*.4,y:250,r:55,title:'成长中的话题'},{id:'c',x:w*.4,y:310,r:15,title:'这是一个需要换行的很长的话题名称'}];
+  const first=leaderLabels(nodes,w,650),next=leaderLabels(nodes.map(n=>({...n,r:14})),w,650);
+  for(const l of first){assert.equal(l.y,next.find(n=>n.id===l.id).y);assert.ok(l.x>=0&&l.x+l.width<=w);assert.ok(l.y>=100&&l.y+l.height<=578);}
  }
 });

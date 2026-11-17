@@ -5,26 +5,21 @@ import {rateAt,aggregate,valuesAt} from '../shared/lifecycle.js';
 import {EMPTY,sampleAt,formatTime,formatClock,formatDateTime,formatAxis,number,wordsFor} from './live';
 import {useSize} from './useSize';
 import {cloudLayout} from './spatial-layout';
-import {radiusFor,worldLayout,anchorTopics,packTopics,footprintRadius,labelRails,leaderLabels,zoomAt,fitCamera} from './bubble-world';
+import {radiusFor,leaderLabels,zoomAt,fitCamera} from './bubble-world';
 import {BubbleInflux} from './bubble-effects';
+import {useBubbleLayout} from './useBubbleLayout';
 
-export function BubbleMap({topics,values,time,onOpen,cameraScope='',live=false}){
+export function BubbleMap({topics,values,time,onOpen,cameraScope='',live=false,scrubbing=false}){
  const [ref,{width:w,height:h}]=useSize(),[hover,setHover]=useState(null),[camera,setCamera]=useState({x:0,y:0,k:.55});
- const gesture=useRef(new Map()),drag=useRef(null),wheel=useRef(null),packing=useRef({anchors:new Map(),aspect:0,key:''});
+ const gesture=useRef(new Map()),drag=useRef(null),wheel=useRef(null),labelMemory=useRef(new Map());
  const [reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches);
  useEffect(()=>{const m=matchMedia('(prefers-reduced-motion: reduce)'),f=()=>setReduced(m.matches);m.addEventListener('change',f);return()=>m.removeEventListener('change',f);},[]);
- const aspect=Math.max(1,w-2*labelRails(w).gutter)/Math.max(1,h-160),catalogKey=topics.map(q=>q.id).join('|');
- if(packing.current.key!==catalogKey||Math.abs(packing.current.aspect-aspect)>.08){
-  const changedAspect=Math.abs(packing.current.aspect-aspect)>.08;
-  const previous=changedAspect?new Map():packing.current.anchors;
-  const footprints=topics.filter(q=>!previous.has(q.id)).map(q=>({...q,r:footprintRadius(q)}));
-  const anchors=previous.size?anchorTopics(footprints,previous,aspect):new Map(packTopics(footprints,aspect).map(n=>[n.id,n]));
-  packing.current={key:catalogKey,aspect,anchors};
- }
- const items=topics.map(q=>({...q,r:radiusFor(values[q.id]?.views||0)})),nodes=worldLayout(items,packing.current.anchors);
- useEffect(()=>{if(w>0&&h>0)setCamera(fitCamera(nodes,w,h));},[w,h,cameraScope]);
+ const items=topics.map(q=>({...q,r:radiusFor(values[q.id]?.views||0)}));
+ const {nodes,epoch}=useBubbleLayout(items,{width:w,height:h,scale:camera.k,time,scrubbing,scope:cameraScope,reduced});
+ useEffect(()=>{if(w>0&&h>0)setCamera(fitCamera(nodes,w,h));},[epoch]);
  const screenNodes=nodes.map(n=>({...n,x:n.x*camera.k+camera.x,y:n.y*camera.k+camera.y,r:n.r*camera.k}));
- const labels=leaderLabels(screenNodes,w,h);
+ const labels=leaderLabels(screenNodes,w,h,labelMemory.current);labelMemory.current=new Map(labels.map(l=>[l.id,l]));
+ const labeled=new Set(labels.map(l=>l.id));
  const local=e=>{const b=ref.current.getBoundingClientRect();return {x:e.clientX-b.left,y:e.clientY-b.top};};
  wheel.current=e=>{e.preventDefault();const p=local(e);setCamera(c=>zoomAt(c,p,Math.exp(-e.deltaY*.002)));};
  useEffect(()=>{const el=ref.current,handler=e=>wheel.current(e);el.addEventListener('wheel',handler,{passive:false});return()=>el.removeEventListener('wheel',handler);},[]);
@@ -37,7 +32,7 @@ export function BubbleMap({topics,values,time,onOpen,cameraScope='',live=false})
  <g transform={`translate(${camera.x} ${camera.y}) scale(${camera.k})`}>{nodes.map(q=>{
  const v=values[q.id]?.views||0,r=q.r,screenR=r*camera.k,name=q.title.split(' · ')[0];
  const font=Math.min(20,Math.max(12,screenR*.25)),lineLength=Math.max(3,Math.floor(screenR*1.55/font)),balancedLength=Math.ceil(name.length/Math.ceil(name.length/lineLength)),lines=name.match(new RegExp(`.{1,${balancedLength}}`,'g'))||[name];
- const inside=screenR>=44;
+ const inside=!labeled.has(q.id)&&screenR>=36;
  return <g key={q.id} data-topic-id={q.id} transform={`translate(${q.x} ${q.y})`}>
  <g className="topic-bubble" role="button" tabIndex="0" aria-label={`${q.title}，${number(v)}，查看详情`} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(q.id);}}} onPointerEnter={()=>setHover(q.id)} onPointerLeave={()=>setHover(null)} onFocus={()=>setHover(q.id)} onBlur={()=>setHover(null)}>
  <circle r={r} fill={q.color} data-flow={v} data-radius={r}/><circle r={Math.max(r,8/camera.k)} fill="transparent" stroke="none"/>
@@ -49,8 +44,8 @@ export function BubbleMap({topics,values,time,onOpen,cameraScope='',live=false})
  <circle cx={l.sx} cy={l.sy} r="2.5" fill={l.color}/>
  <g className="bubble-label" role="button" tabIndex="0" aria-label={'查看'+l.title} onPointerDown={e=>e.stopPropagation()} onPointerUp={e=>e.stopPropagation()} onClick={()=>onOpen(l.id)} onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpen(l.id);}}}>
  <rect className="bookmark-card" x={l.x} y={l.y} width={l.width} height={l.height} rx="8"/>
- <path d={`M${l.x+12},${l.y} h11 v23 l-5.5,-4 l-5.5,4 Z`} fill={l.color}/>
- <text x={l.x+31} y={l.y+(l.lines.length===1?31:22)} fontSize="12" fontWeight="500" fill="#385465">{l.lines.map((line,i)=><tspan key={i} x={l.x+31} dy={i?17:0}>{line}</tspan>)}</text><title>{l.title}</title></g></g>)}
+ <path d={`M${l.x+12},${l.y} h9 v18 l-4.5,-3 l-4.5,3 Z`} fill={l.color}/>
+ <text x={l.x+31} y={l.y+(l.lines.length===1?23:20)} fontSize="12" fontWeight="500" fill="#385465">{l.lines.map((line,i)=><tspan key={i} x={l.x+31} dy={i?17:0}>{line}</tspan>)}</text><title>{l.title}</title></g></g>)}
  </svg>
  <BubbleInflux nodes={screenNodes} width={w} height={h} enabled={live&&!reduced}/>
  {!nodes.length&&<div className="bubble-empty">这一时刻暂无匹配话题</div>}
@@ -59,7 +54,7 @@ export function BubbleMap({topics,values,time,onOpen,cameraScope='',live=false})
  </div>;
 }
 
-export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='traffic',topic=null,windowKey='m5',metric='count',selected=null,onSelect,events=[],empty=false,wheelZoom=false}){
+export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='traffic',topic=null,windowKey='m5',metric='count',selected=null,onSelect,events=[],empty=false,wheelZoom=false,onInteractionChange}){
  const [ref,{width:w,height:h}]=useSize(),clip=useId(),[probe,setProbe]=useState(null),drag=useRef(null),wheelRef=useRef(null);
  const left=58,right=20,top=14,bottom=31,pw=Math.max(20,w-left-right),ph=Math.max(50,h-top-bottom);
  const resolution=Math.max(STEP,span/Math.max(100,Math.floor(pw/3))),anchor=Math.ceil(end/resolution)*resolution,start=anchor-span,offset=(end-anchor)*pw/span;
@@ -80,12 +75,12 @@ export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='
  const hit=p=>{if(empty)return {...p,index:-1,values:[],sum:0};const amounts=kind==='opinion'?valuesAt(topic,p.t).counts[windowKey]:series.map(s=>read(s,p.t)),sum=amounts.reduce((a,b)=>a+b,0);let base=kind==='opinion'?(ymax-(metric==='share'&&sum?100:sum))/2:0,index=-1;amounts.forEach((v,j)=>{const high=base+(kind==='opinion'&&metric==='share'?(sum?v/sum*100:0):v);if(p.py>=y(high)&&p.py<=y(base)&&v>0)index=j;base=high;});return {...p,index,values:amounts,sum};};
  wheelRef.current=e=>{if(e.ctrlKey||e.metaKey||(wheelZoom&&!e.shiftKey&&Math.abs(e.deltaX)<=Math.abs(e.deltaY))){e.preventDefault();onZoom?.(span*Math.exp(e.deltaY*.003),point(e).t);}else{const dx=Math.abs(e.deltaX)>0?e.deltaX:e.shiftKey?e.deltaY:0;if(dx){e.preventDefault();onPan(end+dx/pw*span);}}};
  useEffect(()=>{const el=ref.current,handler=e=>wheelRef.current(e);el.addEventListener('wheel',handler,{passive:false});return()=>el.removeEventListener('wheel',handler);},[]);
- const down=e=>{if(e.button!==0)return;const p=hit(point(e));drag.current={x:p.px,end,pan:e.shiftKey||e.altKey};e.currentTarget.setPointerCapture(e.pointerId);if(!drag.current.pan){onSeek(p.t);if(kind==='opinion'&&p.index>=0)onSelect?.(series[p.index].index);}};
+ const down=e=>{if(e.button!==0)return;onInteractionChange?.(true);const p=hit(point(e));drag.current={x:p.px,end,pan:e.shiftKey||e.altKey};e.currentTarget.setPointerCapture(e.pointerId);if(!drag.current.pan){onSeek(p.t);if(kind==='opinion'&&p.index>=0)onSelect?.(series[p.index].index);}};
  const move=e=>{const p=point(e),d=drag.current;if(d){if(d.pan)onPan(d.end-(p.px-d.x)/pw*span);else onSeek(p.t);}setProbe(hit(p));};
- const up=e=>{drag.current=null;if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);};
+ const up=e=>{drag.current=null;onInteractionChange?.(false);if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);};
  const ticks=Math.max(2,Math.floor(pw/140)),visibleEvents=events.filter(e=>e.time>=end-span&&e.time<=Math.min(end,time));
  return <div ref={ref} className="timeline" onPointerLeave={()=>!drag.current&&setProbe(null)}>
- <svg width={w} height={h} role="slider" tabIndex="0" aria-valuemin={end-span} aria-valuemax={end} aria-valuenow={Math.max(end-span,Math.min(end,time))} aria-valuetext={formatDateTime(time)} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();const delta=(e.key==='ArrowLeft'?-1:1)*span/100;e.shiftKey?onPan(end+delta*10):onSeek(Math.max(end-span,Math.min(end,time+delta)));}}} data-time-start={end-span} data-time-end={end} aria-label={kind==='opinion'?'观点演化河流图':'流量演化时间图'} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>{drag.current=null;setProbe(null);}} style={{cursor:'crosshair',touchAction:'none'}}>
+ <svg width={w} height={h} role="slider" tabIndex="0" aria-valuemin={end-span} aria-valuemax={end} aria-valuenow={Math.max(end-span,Math.min(end,time))} aria-valuetext={formatDateTime(time)} onKeyDown={e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();const delta=(e.key==='ArrowLeft'?-1:1)*span/100;e.shiftKey?onPan(end+delta*10):onSeek(Math.max(end-span,Math.min(end,time+delta)));}}} data-time-start={end-span} data-time-end={end} aria-label={kind==='opinion'?'观点演化河流图':'流量演化时间图'} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>{drag.current=null;setProbe(null);onInteractionChange?.(false);}} style={{cursor:'crosshair',touchAction:'none'}}>
  <defs><clipPath id={clip}><rect x={left} y={top} width={pw} height={ph}/></clipPath></defs>
  {kind==='traffic'&&[0,.5,1].map(n=><g key={n}><line x1={left} x2={w-right} y1={y(ymax*n)} y2={y(ymax*n)} stroke="#e2e9ed" strokeDasharray="3 5"/><text x={left-9} y={y(ymax*n)+4} textAnchor="end" className="axis-text">{number(ymax*n)}</text></g>)}
  <g clipPath={`url(#${clip})`}><g transform={`translate(${-offset} 0)`}>{geometry.paths.map((g,j)=><path key={g.key} d={g.path} fill={series[j].color} opacity={kind==='opinion'&&selected!==null&&selected!==j?.25:.88} stroke="white" strokeWidth=".45"/>)}</g>

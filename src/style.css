@@ -58,7 +58,7 @@ svg:focus,.topic-bubble:focus,.cloud-word:focus{outline:none}
 .viewport-bar:hover .viewport-thumb,.viewport-bar:focus-visible .viewport-thumb{background:#7f9caa}
 .influx-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}.canvas-controls,.bubble-info{z-index:3}.bubble-label{cursor:pointer}.bubble-label:focus-visible rect{stroke:#527b8e;stroke-width:2}.bubble-label text{pointer-events:none}
 
-/* Side bookmarks remain quiet while the data circles grow and shrink. */
+/* Nearby bookmarks follow their bubbles while the data circles grow and shrink. */
 .bookmark-card{fill:#fff;stroke:#d5dfe5;stroke-width:1}
 .bubble-label:hover .bookmark-card{fill:#f1f6f8;stroke:#90a9b5}
 .bubble-label:focus-visible .bookmark-card{stroke:#527b8e;stroke-width:2}

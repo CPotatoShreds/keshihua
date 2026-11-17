@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {radiusFor,packTopics,compactTargets,approachLayout,leaderLabels,zoomAt,fitCamera} from '../src/bubble-world.js';
+import {radiusFor,separateOverlaps,packTopics,compactTargets,approachLayout,leaderLabels,zoomAt,fitCamera} from '../src/bubble-world.js';
 const bounds=ns=>({w:Math.max(...ns.map(n=>n.x+n.r))-Math.min(...ns.map(n=>n.x-n.r)),h:Math.max(...ns.map(n=>n.y+n.r))-Math.min(...ns.map(n=>n.y-n.r))});
 test('circle area preserves exposure ratios without minimums or caps',()=>{assert.equal(radiusFor(0),0);assert.ok(Math.abs(radiusFor(1e7)**2/radiusFor(2e6)**2-5)<1e-10);assert.equal(radiusFor(100000),100);assert.equal(radiusFor(400000),200);assert.ok(radiusFor(1e9)>1000);});
 test('camera preserves cursor world position and relative radii',()=>{const c={k:.5,x:120,y:90},p={x:400,y:220},n=zoomAt(c,p,2);assert.equal((p.x-c.x)/c.k,(p.x-n.x)/n.k);assert.equal((p.y-c.y)/c.k,(p.y-n.y)/n.k);const nodes=packTopics([{id:'a',r:1000},{id:'b',r:25},{id:'c',r:100}]);const f=fitCamera(nodes,800,400);assert.ok(f.k<1);assert.equal(nodes.find(q=>q.id==='a').r/nodes.find(q=>q.id==='b').r,40);});
@@ -19,7 +19,7 @@ test('local relaxation closes obsolete peak-sized gaps without changing current 
  const after=bounds(small);assert.ok(after.w*after.h<before.w*before.h*.35);
  for(const a of small){assert.equal(a.r,60);for(const b of small)if(a.id!==b.id)assert.ok(Math.hypot(a.x-b.x,a.y-b.y)>=a.r+b.r+20);}
 });
-test('new topics keep retained coordinates; scrubbing holds centers while radius changes',()=>{
+test('new topics keep retained coordinates and optional attraction hold preserves centers',()=>{
  const initial=packTopics([{id:'a',r:100},{id:'b',r:80}],2),old=new Map(initial.map(n=>[n.id,n]));
  const next=packTopics([...initial.map(n=>({...n,r:n.r*1.3})),{id:'c',r:50}],2,old);
  for(const n of initial){const p=next.find(q=>q.id===n.id);assert.equal(p.x,n.x);assert.equal(p.y,n.y);}
@@ -50,4 +50,28 @@ test('an unchanged scene settles instead of orbiting or jittering forever',()=>{
  let nodes=packTopics(Array.from({length:8},(_,i)=>({id:String(i),r:100})),2),targets=nodes,before;
  for(let i=0;i<1800;i++){if(i%11===0)targets=compactTargets(nodes,2);if(i===1680)before=nodes;nodes=approachLayout(nodes,targets,1/60,.5);}
  assert.ok(Math.max(...nodes.map((n,i)=>Math.hypot(n.x-before[i].x,n.y-before[i].y)*.5))<1);
+});
+
+const assertSeparated=ns=>{for(let i=0;i<ns.length;i++)for(let j=i+1;j<ns.length;j++)assert.ok(Math.hypot(ns[i].x-ns[j].x,ns[i].y-ns[j].y)>=ns[i].r+ns[j].r-.01);};
+test('held time scrubbing corrects growing radii on every frame without changing the data',()=>{
+ let nodes=packTopics(Array.from({length:12},(_,i)=>({id:String(i),r:40+i*15})),2);
+ for(let frame=0;frame<120;frame++){
+  const radii=nodes.map((n,i)=>20+Math.abs(Math.sin(frame*.15+i))*250);
+  nodes=nodes.map((n,i)=>({...n,r:radii[i]}));
+  nodes=separateOverlaps(approachLayout(nodes,compactTargets(nodes,2),1/60*.35,.5),8);
+  assertSeparated(nodes);assert.deepEqual(nodes.map(n=>n.r),radii);
+ }
+});
+test('coincident centers and a sudden large time jump cannot leave circles overlapping',()=>{
+ const nodes=Array.from({length:20},(_,i)=>({id:String(i),x:0,y:0,r:20+i*15}));
+ const next=separateOverlaps(nodes,4);assertSeparated(next);assert.ok(next.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
+});
+test('small circles escape the cavity between large circles and settle outside the core',()=>{
+ let nodes=[{id:'a',r:200,x:-210,y:0},{id:'b',r:200,x:210,y:0},{id:'c',r:180,x:0,y:340},{id:'small',r:25,x:0,y:130}];
+ let targets=nodes;
+ for(let i=0;i<3600;i++){if(i%11===0)targets=compactTargets(nodes,1.8);nodes=separateOverlaps(approachLayout(nodes,targets,1/60,.5),8);assertSeparated(nodes);}
+ const core=nodes.filter(n=>n.id!=='small'),small=nodes.find(n=>n.id==='small');
+ const cx=core.reduce((s,n)=>s+n.x,0)/3,cy=core.reduce((s,n)=>s+n.y,0)/3,d=Math.hypot(small.x-cx,small.y-cy),ux=(small.x-cx)/d,uy=(small.y-cy)/d;
+ assert.ok(d>Math.max(...core.map(n=>Math.hypot(n.x-cx,n.y-cy)))+100);
+ assert.ok(core.every(n=>(small.x-n.x)*ux+(small.y-n.y)*uy>n.r+small.r));assertSeparated(nodes);
 });

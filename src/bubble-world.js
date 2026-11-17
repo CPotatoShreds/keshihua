@@ -22,21 +22,44 @@ export function packTopics(items,aspect=1,previous=new Map()){
  if(!previous.size){const box=extent(placed),cx=(box.left+box.right)/2,cy=(box.top+box.bottom)/2;placed.forEach(n=>{n.x-=cx;n.y-=cy;});}
  return placed;
 }
-// Local relaxation preserves the existing neighbourhood; it never sorts by heat.
+// Collision correction is a geometric constraint, including during scrubbing.
+// It is intentionally separate from speed-limited decorative rearrangement.
+export function separateOverlaps(nodes,padding=0){
+ const out=nodes.map(n=>({...n}));
+ for(let pass=0;pass<160;pass++){
+  let penetration=0;
+  for(let i=0;i<out.length;i++)for(let j=i+1;j<out.length;j++){
+   const a=out[i],b=out[j],dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy),need=a.r+b.r+padding;
+   if(d>=need)continue;
+   penetration=Math.max(penetration,need-d);
+   const angle=(i*2.399963+j*1.618),ux=d>1e-8?dx/d:Math.cos(angle),uy=d>1e-8?dy/d:Math.sin(angle);
+   const wa=(b.r*b.r+1600)/(a.r*a.r+b.r*b.r+3200),push=need-d+.001;
+   a.x-=ux*push*wa;a.y-=uy*push*wa;b.x+=ux*push*(1-wa);b.y+=uy*push*(1-wa);
+  }
+  if(penetration<.001)break;
+ }
+ return out;
+}
+const centerOf=ns=>{const mass=ns.reduce((s,n)=>s+n.r*n.r+1600,0);return {x:ns.reduce((s,n)=>s+n.x*(n.r*n.r+1600),0)/mass,y:ns.reduce((s,n)=>s+n.y*(n.r*n.r+1600),0)/mass};};
+// Larger circles gravitate inward; small circles seek the outer silhouette,
+// instead of fitting into the cavities between the large circles.
 export function compactTargets(nodes,aspect=1){
  if(nodes.length<2)return nodes.map(n=>({...n}));
- const out=nodes.map(n=>({...n})),ratio=Math.max(.5,Math.min(3,aspect));
- const center=ns=>{const mass=ns.reduce((s,n)=>s+n.r+40,0);return {x:ns.reduce((s,n)=>s+n.x*(n.r+40),0)/mass,y:ns.reduce((s,n)=>s+n.y*(n.r+40),0)/mass};},origin=center(out);
- for(let pass=0;pass<36;pass++){
-  for(const n of out){n.x+=(origin.x-n.x)*.012/ratio;n.y+=(origin.y-n.y)*.012*ratio;}
-  for(let solve=0;solve<3;solve++)for(let i=0;i<out.length;i++)for(let j=i+1;j<out.length;j++){
-   const a=out[i],b=out[j],dx=b.x-a.x||.001,dy=b.y-a.y||.001,d=Math.hypot(dx,dy),need=a.r+b.r+gap(a,b);
-   if(d>=need)continue;
-   const wa=(b.r+40)/(a.r+b.r+80),push=(need-d)/d;
-   a.x-=dx*push*wa;a.y-=dy*push*wa;b.x+=dx*push*(1-wa);b.y+=dy*push*(1-wa);
+ let out=nodes.map(n=>({...n}));const ratio=Math.max(.5,Math.min(3,aspect)),origin=centerOf(out),maxR=Math.max(...out.map(n=>n.r));
+ for(let pass=0;pass<24;pass++){
+  for(let i=0;i<out.length;i++){
+   const n=out[i],size=n.r/maxR,attraction=.006+.025*size*size;
+   n.x+=(origin.x-n.x)*attraction/ratio;n.y+=(origin.y-n.y)*attraction*ratio;
+   if(size<.55){
+    const dx=n.x-origin.x,dy=n.y-origin.y,d=Math.hypot(dx,dy),angle=i*2.399963,ux=d>1?dx/d:Math.cos(angle),uy=d>1?dy/d:Math.sin(angle);
+    const larger=out.filter(q=>q.r>n.r*1.8&&q.r>maxR*.2);
+    const rim=Math.max(0,...larger.map(q=>(q.x-origin.x)*ux+(q.y-origin.y)*uy+q.r+n.r+gap(q,n)));
+    if(d<rim){n.x+=ux*(rim-d);n.y+=uy*(rim-d);}
+   }
   }
+  out=separateOverlaps(out,28);
  }
- const shifted=center(out);for(const n of out){n.x+=origin.x-shifted.x;n.y+=origin.y-shifted.y;}return out;
+ const shifted=centerOf(out);for(const n of out){n.x+=origin.x-shifted.x;n.y+=origin.y-shifted.y;}return out;
 }
 // Exponential convergence with a screen-space speed cap, independent of frame rate.
 export function approachLayout(nodes,targets,dt,scale=1,hold=false){

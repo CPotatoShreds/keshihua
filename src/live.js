@@ -9,7 +9,7 @@ export function mergeFeed(previous,message,replace=false){
  const events=new Map((prior?.events||[]).map(e=>[e.id,e]));for(const e of message.events||[])events.set(e.id,e);
  const firstRetained=sorted.findIndex(f=>f.time>=oldest);
  const boundaries=new Set([...topics.values()].flatMap(q=>[q.bornAt,q.endsAt]));for(const e of events.values())boundaries.add(e.time);
- return {frames:sorted.filter((f,i)=>f.time>=oldest&&(f.time>=latest-600000||f.time%3600000===0||boundaries.has(f.time)||i===firstRetained)),topics:[...topics.values()].filter(q=>q.endsAt+3600000>=oldest).sort((a,b)=>a.bornAt-b.bornAt),events:[...events.values()].filter(e=>e.time>=oldest).sort((a,b)=>a.time-b.time),receivedAt:previous?.frames.at(-1)?.time===latest?previous.receivedAt:performance.now()};
+ return {frames:sorted.filter((f,i)=>f.time>=oldest&&(f.time>=latest-600000||f.time%3600000===0||boundaries.has(f.time)||i===firstRetained)),topics:[...topics.values()].filter(q=>q.endsAt+3600000>=oldest).sort((a,b)=>a.bornAt-b.bornAt),events:[...events.values()].filter(e=>e.time>=oldest).sort((a,b)=>a.time-b.time),retentionStart:message.retentionStart??previous?.retentionStart??latest-RETENTION,receivedAt:previous?.frames.at(-1)?.time===latest?previous.receivedAt:performance.now()};
 }
 export function sampleAt(frames,time){
  if(!frames.length)return {time,values:{}};
@@ -52,8 +52,8 @@ export function useFeed(){
 export function usePlayer(data){
  const [state,setState]=useState({time:0,mode:'live'}),ref=useRef(state),feed=useRef(data);feed.current=data;
  const update=next=>{ref.current=typeof next==='function'?next(ref.current):next;setState(ref.current);};
- useEffect(()=>{let id;function frame(now){const d=feed.current;if(d?.frames.length){const edge=d.frames.at(-1).time-STEP+Math.min(STEP,Math.max(0,now-d.receivedAt));const next={...stepPlayer(ref.current,edge,d.frames[0].time),edge};if(next.time!==ref.current.time||next.mode!==ref.current.mode||next.edge!==ref.current.edge){ref.current=next;setState(next);}}id=requestAnimationFrame(frame);}id=requestAnimationFrame(frame);return()=>cancelAnimationFrame(id);},[]);
- return {...state,seek:t=>update(s=>({...s,time:Math.max(data.frames[0].time,Math.min(t,ref.current.edge||data.frames.at(-1).time)),mode:'manual'})),live:()=>update(s=>({...s,time:s.edge||s.time,mode:'live'}))};
+ useEffect(()=>{let id;function frame(now){const d=feed.current;if(d?.frames.length){const edge=d.frames.at(-1).time-STEP+Math.min(STEP,Math.max(0,now-d.receivedAt));const next={...stepPlayer(ref.current,edge,d.retentionStart??d.frames[0].time),edge};if(next.time!==ref.current.time||next.mode!==ref.current.mode||next.edge!==ref.current.edge){ref.current=next;setState(next);}}id=requestAnimationFrame(frame);}id=requestAnimationFrame(frame);return()=>cancelAnimationFrame(id);},[]);
+ return {...state,seek:t=>update(s=>({...s,time:Math.max(data.retentionStart??data.frames[0].time,Math.min(t,ref.current.edge||data.frames.at(-1).time)),mode:'manual'})),live:()=>update(s=>({...s,time:s.edge||s.time,mode:'live'}))};
 }
 const clock=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
 const minute=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour12:false,hour:'2-digit',minute:'2-digit'});

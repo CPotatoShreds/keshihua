@@ -6,7 +6,11 @@ import {mergeFeed,sampleAt,stepPlayer,clampViewport,matching,wordsFor} from '../
 import {STEP,RETENTION,LIFE,INTERVAL,templates} from '../shared/catalog.js';
 const now=1794571200000,base=snapshot(now),q=base.topics.at(-4);
 test('topics have unique story identities, ordered non-repeating events and a finite lifecycle',()=>{
- assert.equal(templates.length,24);const events=eventsBetween(q.bornAt,q.endsAt,[q]);assert.equal(events.length,5);assert.equal(new Set(events.map(e=>e.title)).size,5);assert.ok(events.every((e,i)=>i===0||e.time>events[i-1].time));assert.equal(aggregate(q,q.bornAt-1).views,0);assert.equal(aggregate(q,q.endsAt+300000).views,0);assert.ok(q.title.includes(' · '));assert.ok(aggregate(q,q.bornAt+(q.endsAt-q.bornAt)*.3).views>0);
+ assert.ok(templates.length>=30);
+ assert.equal(new Set(base.topics.map(t=>t.title)).size,base.topics.length);
+ const allEvents=eventsBetween(now-RETENTION,now,base.topics);
+ assert.equal(new Set(allEvents.map(e=>e.title)).size,allEvents.length);
+ const events=eventsBetween(q.bornAt,q.endsAt,[q]);assert.equal(events.length,5);assert.equal(new Set(events.map(e=>e.title)).size,5);assert.ok(events.every((e,i)=>i===0||e.time>events[i-1].time));assert.equal(aggregate(q,q.bornAt-1).views,0);assert.equal(aggregate(q,q.endsAt+300000).views,0);assert.ok(q.title.startsWith(q.city));assert.ok(aggregate(q,q.bornAt+(q.endsAt-q.bornAt)*.3).views>0);
 });
 test('one-hour totals integrate raw rates rather than summing overlapping windows',()=>{
  const t=q.bornAt+(q.endsAt-q.bornAt)*.6,total=aggregate(q,t,60),parts=Array.from({length:12},(_,i)=>aggregate(q,t-i*5*60000,5));
@@ -16,7 +20,7 @@ test('responses and new evidence shift mainstream views',()=>{
  const life=q.endsAt-q.bornAt,early=aggregate(q,q.bornAt+life*.1),late=aggregate(q,q.bornAt+life*.9);assert.ok(early.counts[2]>early.counts[3]);assert.ok(late.counts[3]>late.counts[2]);
 });
 test('historical samples remain reproducible when new topics appear',()=>{
- const a=frameAt(Math.floor(now/STEP)),b=snapshot(now+STEP);assert.deepEqual(a,b.frames.at(-2));assert.equal(base.frames.at(-1).time-base.frames[0].time,RETENTION);assert.ok(base.frames.length<5000);assert.ok(base.frames.every(f=>Object.keys(f.values).every(id=>base.topics.some(q=>q.id===id))));
+ const a=frameAt(Math.floor(now/STEP)),b=snapshot(now+STEP);assert.deepEqual(a,b.frames.at(-2));assert.equal(base.retentionStart,base.frames.at(-1).time-RETENTION);assert.ok(base.frames.length<=130);assert.ok(base.frames.every(f=>Object.keys(f.values).every(id=>base.topics.some(q=>q.id===id))));
 });
 test('reconnect recovers newly born topic metadata and events',()=>{
  const boundary=instancesBetween(now,now+3*INTERVAL).find(q=>q.bornAt>now).bornAt,first=snapshot(boundary-STEP),message=delta(first.frames.at(-1).seq,boundary+STEP);assert.equal(message.type,'frames');assert.ok(message.payload.topics.some(q=>q.bornAt===boundary));

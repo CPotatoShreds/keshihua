@@ -1,68 +1,67 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {flushSync} from 'react-dom';
-import {ArrowLeft,Search,Radio,Info,X,ChevronRight,Download} from 'lucide-react';
-import {useFeed,usePlayer,sampleAt,EMPTY,matching,clampViewport,detailViewport,formatClock,formatDateTime,number} from './live';
-import {BubbleMap,Timeline,OpinionBars,WordCloud} from './charts';
+import {Search,Radio,X,ChevronRight,Download} from 'lucide-react';
+import {useFeed,usePlayer,matching,clampViewport,detailViewport,formatDateTime} from './live';
+import {BubbleMap,Timeline} from './charts';
+import {ViewportBar} from './viewport-bar';
+import {TopicPage} from './topic-page';
+import {TUNING_DEFAULTS,loadTuning,saveTuning,clearTuning} from './tuning';
 import './style.css';
 import {valuesAt} from '../shared/lifecycle';
 import {RETENTION} from '../shared/catalog';
-const DAY=86400000;
-function ViewportBar({oldest,edge,end,span,onPan}){
- const ref=useRef(null),drag=useRef(null),total=Math.max(1,edge-oldest),widthFrac=Math.min(1,span/total),start=Math.max(oldest,Math.min(edge-span,end-span)),leftFrac=Math.max(0,Math.min(1-widthFrac,(start-oldest)/total));
- const point=clientX=>oldest+Math.max(0,Math.min(1,(clientX-ref.current.getBoundingClientRect().left)/ref.current.getBoundingClientRect().width))*total+span/2;
- const down=e=>{if(e.button!==0)return;const thumb=e.target.classList.contains('viewport-thumb'),next=thumb?end:Math.max(oldest+span,Math.min(edge,point(e.clientX)));onPan(next);drag.current={x:e.clientX,end:next};e.currentTarget.setPointerCapture(e.pointerId);};
- const move=e=>{const d=drag.current;if(!d)return;onPan(d.end+(e.clientX-d.x)/ref.current.getBoundingClientRect().width*total);};
- const up=e=>{drag.current=null;if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);};
- const key=e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();onPan(end+(e.key==='ArrowLeft'?-1:1)*span*.2);}};
- return <div className="viewport-shell"><div ref={ref} className="viewport-bar" role="scrollbar" aria-label="时间视口" aria-orientation="horizontal" aria-valuemin={Math.round(oldest)} aria-valuemax={Math.round(edge)} aria-valuenow={Math.round(start)} aria-valuetext={formatDateTime(start)} tabIndex="0" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={()=>{drag.current=null;}} onKeyDown={key}><span className="viewport-track"/><span className="viewport-thumb" style={{left:(leftFrac*100)+'%',width:(widthFrac*100)+'%'}}/></div></div>;
-}
+const DAY=86400000,TUNING_ENABLED=import.meta.env.DEV||new URLSearchParams(location.search).has('tune');
+const TuningPanel=TUNING_ENABLED?React.lazy(()=>import('./tuning-panel').then(m=>({default:m.TuningPanel}))):null;
 function App(){
  const {data,status,retry}=useFeed(),player=usePlayer(data);
- const [scrubbing,setScrubbing]=useState(false);
- const [selected,setSelected]=useState(null),[query,setQuery]=useState(''),[searchOpen,setSearchOpen]=useState(false),[overviewSpan,setOverviewSpan]=useState(7*DAY),[detailRange,setDetailRange]=useState('auto'),[detailWindow,setDetailWindow]=useState(null),[fixedEnd,setFixedEnd]=useState(null),[windowKey,setWindowKey]=useState('m5'),[metric,setMetric]=useState('count'),[opinion,setOpinion]=useState(null),[word,setWord]=useState(null),[eventId,setEventId]=useState(null),[info,setInfo]=useState(false);
+ const [scrubbing,setScrubbing]=useState(false),[selected,setSelected]=useState(null),[query,setQuery]=useState(''),[searchOpen,setSearchOpen]=useState(false),[overviewSpan,setOverviewSpan]=useState(7*DAY),[detailWindow,setDetailWindow]=useState(null),[fixedEnd,setFixedEnd]=useState(null),[info,setInfo]=useState(false),[enter,setEnter]=useState(null),[departing,setDeparting]=useState(null);
+ const [tuning,setTuning]=useState(loadTuning),[replay,setReplay]=useState(0);
  const [reduced,setReduced]=useState(()=>matchMedia('(prefers-reduced-motion: reduce)').matches),infoRef=useRef(null);
+ useEffect(()=>{saveTuning(tuning);},[tuning]);
  useEffect(()=>{if(!searchOpen)return;const dismiss=e=>{if(!e.target.closest('.search-wrap'))setSearchOpen(false);};document.addEventListener('pointerdown',dismiss);return()=>document.removeEventListener('pointerdown',dismiss);},[searchOpen]);
  useEffect(()=>{const m=matchMedia('(prefers-reduced-motion: reduce)'),change=()=>setReduced(m.matches);m.addEventListener('change',change);return()=>m.removeEventListener('change',change);},[]);
  useEffect(()=>{if(!info)return;const prev=document.activeElement;infoRef.current.querySelector('button').focus();const key=e=>{if(e.key==='Escape')setInfo(false);if(e.key==='Tab'){const a=infoRef.current.querySelectorAll('button,a');if(e.shiftKey&&document.activeElement===a[0]){e.preventDefault();a[a.length-1].focus();}else if(!e.shiftKey&&document.activeElement===a[a.length-1]){e.preventDefault();a[0].focus();}}};document.addEventListener('keydown',key);return()=>{document.removeEventListener('keydown',key);prev?.focus();};},[info]);
- const time=player.time||data?.frames.at(-1)?.time||Date.now(),edge=player.edge||time,oldest=data?.frames[0]?.time||time,topics=data?.topics||[],topic=topics.find(q=>q.id===selected);
- const lifecycleWindow=topic&&detailRange==='life'?{end:Math.min(edge,topic.endsAt+3600000),span:Math.min(edge,topic.endsAt+3600000)-topic.bornAt}:null;
- const detail=topic?detailViewport(topic.bornAt,time,oldest,edge,detailRange==='life'?'auto':detailRange,detailWindow||lifecycleWindow):null;
- const span=detail?.span??overviewSpan,end=detail?.end??(clampViewport(fixedEnd===null?time:fixedEnd,overviewSpan,oldest,edge));
- const following=topic?detailWindow===null:fixedEnd===null;
- const snapshot=data?{time,values:Object.fromEntries(topics.filter(q=>q.bornAt<=time&&q.endsAt+3600000>=time).map(q=>[q.id,valuesAt(q,time)]))}:null,values=snapshot?.values||{},current=values[selected]||EMPTY,counts=current.counts[windowKey],total=counts.reduce((a,b)=>a+b,0);
+ const time=player.time||data?.frames.at(-1)?.time||Date.now(),edge=player.edge||time,oldest=data?.retentionStart??time-RETENTION,topics=data?.topics||[],topic=topics.find(q=>q.id===selected);
+ const detail=topic?detailViewport(topic.bornAt,time,oldest,edge,'auto',detailWindow):null;
+ const span=detail?.span??overviewSpan,end=detail?.end??clampViewport(fixedEnd===null?time:fixedEnd,overviewSpan,oldest,edge);
+ const snapshot=data?{time,values:Object.fromEntries(topics.filter(q=>q.bornAt<=time&&q.endsAt+3600000>=time).map(q=>[q.id,valuesAt(q,time)]))}:null,values=snapshot?.values||{};
  const filtered=useMemo(()=>topics.filter(q=>matching(q,query)),[topics,query]);
- const active=filtered.filter(q=>q.bornAt<=time&&(values[q.id]?.views||0)>0),ranked=active.slice().sort((a,b)=>(values[b.id]?.views||0)-(values[a.id]?.views||0));
- const chartTopics=useMemo(()=>topic?[topic]:filtered,[topic,filtered]);
+ const active=filtered.filter(q=>q.bornAt<=time&&(values[q.id]?.views||0)>0),ranked=active.slice().sort((a,b)=>(values[b.id]?.views||0)-(values[a.id]?.views||0)),shown=ranked.length>14?ranked.slice(0,14):ranked;
+ const chartTopics=useMemo(()=>{if(selected)return [];const visible=filtered.filter(q=>q.bornAt<=end&&q.endsAt>=end-span).sort((a,b)=>b.amplitude-a.amplitude);return visible.length>24?visible.slice(0,24):visible;},[selected,filtered,end,span]);
  const allTopicEvents=useMemo(()=>data?.events.filter(e=>e.topicId===selected)||[],[data?.events,selected]);
- const events=allTopicEvents.filter(e=>e.time<=time&&e.time>=end-span&&e.time<=end);
- const currentEvent=allTopicEvents.find(e=>e.id===eventId)||allTopicEvents.filter(e=>e.time<=time).at(-1);
- const selectOpinion=n=>{setOpinion(n);setWord(null);};
- const navigate=id=>{if(id===selected)return;const target=topics.find(q=>q.id===id);if(target&&(time<target.bornAt||time>target.endsAt)){player.seek(Math.min(edge,target.bornAt+(target.endsAt-target.bornAt)*.35));}const change=()=>flushSync(()=>{setSelected(id);setDetailRange('auto');setDetailWindow(null);setOpinion(null);setWord(null);setEventId(null);});if(document.startViewTransition&&!reduced)document.startViewTransition(change);else change();};
- const seek=t=>{if(topic)setDetailWindow({end,span});else setFixedEnd(end);setEventId(null);player.seek(t);};
+ const openTopic=(id,source=null)=>{if(!id||id===selected)return;const target=topics.find(q=>q.id===id);if(!target)return;
+  const from={topics:chartTopics,end,span};
+  if(time<target.bornAt||time>target.endsAt)player.seek(Math.min(edge,target.bornAt+(target.endsAt-target.bornAt)*.35));
+  const rect=source?{x:source.x,y:source.y,w:source.width??source.w,h:source.height??source.h}:null;
+  setSearchOpen(false);
+  if(!reduced&&rect){
+   setDeparting(id);
+   const enterNext={topicId:id,sourceRect:rect,from,startedAt:performance.now()};
+   setTimeout(()=>{flushSync(()=>{setSelected(id);setDetailWindow(null);setEnter(enterNext);setDeparting(null);});},tuning.departMs);
+  }else flushSync(()=>{setSelected(id);setDetailWindow(null);setEnter(null);});
+ };
+ const back=()=>{if(!selected)return;setDeparting(null);const change=()=>flushSync(()=>{setSelected(null);setEnter(null);setDetailWindow(null);});if(document.startViewTransition&&!reduced)document.startViewTransition(change);else change();};
+ const seek=t=>{if(topic)setDetailWindow({end,span});else setFixedEnd(end);player.seek(t);};
  const pan=t=>topic?setDetailWindow({end:t,span}):setFixedEnd(clampViewport(t,span,oldest,edge));
- const goLive=()=>{setFixedEnd(null);setDetailWindow(null);setEventId(null);player.live();};
- const zoomTimeline=(requested,center=time)=>{const next=Math.max(60000,Math.min(RETENTION,requested)),nextEnd=Math.max(oldest+next,Math.min(edge,center+next/2));if(topic){setDetailRange(next);setDetailWindow({end:nextEnd,span:next});}else{setOverviewSpan(next);setFixedEnd(nextEnd);}};
- const changeRange=value=>{if(topic){setDetailRange(['auto','life'].includes(value)?value:+value);setDetailWindow(null);}else{setOverviewSpan(+value);setFixedEnd(null);}};
- const comments=topic&&(opinion!==null||word)?topic.clusters.flatMap((c,j)=>{if(opinion!==null&&j!==opinion||word&&!c.words.includes(word))return [];const phrases=c.examples||[`关于“${topic.title}”，${c.words[0]}不能只停留在口头承诺，希望能公布具体安排。`,`我更关注${c.words[1]}和${c.words[2]}，后续可以邀请实际使用者一起反馈。`];return phrases.filter(p=>!word||p.includes(word)).map((text,k)=>({id:c.id+'-'+k,text,cluster:c.title,color:c.color}));}):[];
- return <>{topic&&<header className="app-header"><button className="brand" onClick={()=>navigate(null)} aria-label="返回话题总览"><span className="brand-mark"><i/><i/><i/></span><strong>观潮</strong></button><span className="brand-line">看见关注的流向</span><div className="header-right"><span className={'connection '+(status==='connected'?'online':'')}><i/>{status==='connected'?'持续更新':status==='reconnecting'?'正在重连':status==='error'?'连接暂不可用':'正在连接'}</span><button className="icon-button" aria-label="关于观潮" onClick={()=>setInfo(true)}><Info size={17}/></button></div></header>}
- {!snapshot?<main className="loading"><span className="loading-dot"/><h1>{status==='error'?'暂时无法连接':'正在汇聚此刻的讨论'}</h1><p>回声社区 · 模拟平台</p>{status==='error'&&<button onClick={retry}>重新连接</button>}</main>:<main className={'main '+(topic?'detail-page':'overview-page')}>
- {topic&&<section className="view-toolbar"><div className="view-title"><button className="back-button" onClick={()=>navigate(null)} aria-label="返回总览"><ArrowLeft size={18}/></button><i className="topic-marker" style={{background:topic.color}}/><h1>{topic.title}</h1></div></section>}
- <div className="page-content" key={selected||'overview'}>
- {!topic&&<section className="panel bubble-panel">
- <div className="overview-overlay"><button className="brand floating-brand" onClick={()=>navigate(null)} aria-label="返回话题总览"><span className="brand-mark"><i/><i/><i/></span><strong>观潮</strong></button>
- <div className="search-wrap" onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setSearchOpen(false);}}><label className="search"><Search size={16}/><input aria-label="搜索话题" placeholder="搜索话题" value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==='Escape'&&setSearchOpen(false)}/>{query&&<button aria-label="清空搜索" onClick={()=>setQuery('')}><X size={13}/></button>}</label>{searchOpen&&<div className="search-suggestions"><span>{query?'匹配话题':'此刻热议'}</span>{(query?filtered.slice().reverse():ranked.slice(0,4)).slice(0,6).map(q=><button key={q.id} onClick={()=>{setSearchOpen(false);navigate(q.id);}}>{q.title}<ChevronRight size={12}/></button>)}{query&&!filtered.length&&<p>试试“{topics.filter(q=>(values[q.id]?.views||0)>0).at(-1)?.title||'社区'}”</p>}</div>}</div></div>
- <BubbleMap scrubbing={scrubbing} topics={active} values={values} time={time} live={player.mode==='live'} cameraScope={query} onOpen={navigate}/></section>}
- <section className={'panel flow-panel '+(topic?'detail-flow':'')}><div className="section-heading"><h2>{topic?'话题流量':'流量演化'}</h2><div className="chart-tools"><time className="playhead-time">{formatDateTime(time)}</time><button className={'live-button '+(player.mode==='live'?'active':'')} onClick={goLive}><Radio size={13}/>{player.mode==='live'?'现在':'回到现在'}</button>{topic&&<><span className="tools-divider"/><select aria-label="图表观察范围" value={detailRange} onChange={e=>changeRange(e.target.value)}><option value="auto">从话题开始</option>{topic.endsAt<=edge&&<option value="life">完整生命周期</option>}{[[3600000,'1小时'],[DAY,'1天'],[7*DAY,'7天'],[30*DAY,'30天'],[RETENTION,'全部历史']].map(([n,label])=><option value={n} key={n}>{label}</option>)}{!['auto','life',3600000,DAY,7*DAY,30*DAY,RETENTION].includes(detailRange)&&<option value={detailRange}>自定义视野</option>}</select></>}</div></div>
- <div className="chart-box"><Timeline frames={data.frames} topics={chartTopics} topic={topic} time={time} end={end} span={span} empty={!!topic&&following&&time<=topic.bornAt} onSeek={seek} onPan={pan} onZoom={zoomTimeline} events={topic?allTopicEvents:[]} wheelZoom={!topic} onInteractionChange={setScrubbing}/></div>
- {!topic&&<ViewportBar oldest={oldest} edge={edge} end={end} span={span} onPan={pan}/>}
- {topic&&<div className="chart-instruction"><span>拖动图表回看 · Shift 拖动平移 · Ctrl 滚轮缩放</span><span>{following?(detailRange==='life'?'完整生命周期':detailRange==='auto'?(detail.truncated?'从最早可用记录开始':'从话题开始'):'宽视野按区间均值'):'自由浏览'}</span></div>}
- {topic&&<><div className="event-track" aria-label="事件节点">{events.length?events.map(e=><button key={e.id} aria-pressed={currentEvent?.id===e.id} onClick={()=>{seek(e.time);setEventId(e.id);}}><time>{formatDateTime(e.time)}</time><span>{e.title}</span></button>):<span className="quiet">这个视野内暂无已发生的节点</span>}</div>{currentEvent&&<article className="event-content"><div><span className="event-tag">{currentEvent.kind}</span><time>{formatDateTime(currentEvent.time)}</time></div><h3>{currentEvent.title}</h3><p>{currentEvent.body}</p></article>}</>}
- </section>
- {topic&&<><section className="panel opinion-panel"><div className="section-heading"><h2>观点如何变化</h2><div className="chart-tools"><span className="discussion-total">{number(total)} 条讨论</span><select aria-label="观点统计窗口" value={windowKey} onChange={e=>setWindowKey(e.target.value)}><option value="m5">每个时刻此前5分钟</option><option value="h1">每个时刻此前1小时</option></select></div></div><div className="opinion-layout"><div className="opinion-comparison"><div className="subheading">{formatClock(time)} 的主流观点</div><OpinionBars topic={topic} counts={counts} selected={opinion} onSelect={selectOpinion}/></div><div className="opinion-history"><div className="river-toolbar"><span>观点演化</span><div className="segmented"><button aria-pressed={metric==='count'} onClick={()=>setMetric('count')}>讨论量</button><button aria-pressed={metric==='share'} onClick={()=>setMetric('share')}>占比</button></div></div><div className="river-box"><Timeline frames={data.frames} topics={chartTopics} topic={topic} kind="opinion" time={time} end={end} span={span} empty={!!topic&&following&&time<=topic.bornAt} onSeek={seek} onPan={pan} onZoom={zoomTimeline} windowKey={windowKey} metric={metric} selected={opinion} onSelect={selectOpinion}/></div><div className="river-caption">{metric==='count'?'色带厚度代表讨论量':'同一截面合计100%，厚度代表观点占比'}{opinion!==null&&<button onClick={()=>selectOpinion(null)}>显示全部观点</button>}</div></div></div></section>
- <section className="panel words-panel"><div className="section-heading"><h2>{opinion===null?'讨论中的关键词':topic.clusters[opinion].title}</h2><span>字号代表提及量 · 点击词查看评论</span></div><WordCloud topic={topic} counts={counts} selected={opinion} word={word} onWord={setWord}/>{(opinion!==null||word)&&<div className="comments"><div className="comments-heading"><span>{word?'“'+word+'”相关评论':'该观点的代表评论'}</span><button className="text-button" onClick={()=>{setWord(null);selectOpinion(null);}}>清除筛选<X size={12}/></button></div>{comments.length?<div className="quote-list">{comments.map((c,i)=><blockquote key={c.id}><span><i style={{background:c.color}}/>社区用户 {i+1} · {c.cluster}</span><p>{c.text}</p></blockquote>)}</div>:<p className="quiet">这个关键词暂没有匹配的代表评论</p>}<small>模拟语料 · 不代表真实用户发言</small></div>}</section></>}
- </div>{topic&&<footer>回声社区 · 课程演示数据</footer>}</main>}
- {info&&<div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setInfo(false)}><section className="about-modal" ref={infoRef} role="dialog" aria-modal="true" aria-labelledby="about-title"><button className="modal-close icon-button" aria-label="关闭说明" onClick={()=>setInfo(false)}><X size={18}/></button><h2 id="about-title">观潮 · 回声社区</h2><p>在一个虚构平台中，观察关注流向与观点转变。</p><dl><dt>空间与时间</dt><dd>气泡面积与每分钟曝光量成正比，半径取平方根。1000万与200万的面积比为5:1。画布可缩放拖拽，不改变气泡之间的比例。当前暂时关闭汇流粒子，话题名称是气泡主要文字，数值仅作辅助。</dd><dt>观点与词云</dt><dd>条形图与河流图共用5分钟或1小时统计窗口。河流支持讨论量与占比切换。选中观点后，关键词和评论一起筛选。提及量为模拟估算，同一评论可包含多个词。</dd><dt>持续变化</dt><dd>流量演化图就是全局时间控制。左键拖动图表定位时刻，滚轮缩放视野，底部滑动条平移时间轴，回到现在恢复实时跟随。120天历史随现在持续滚动。</dd><dt>课程演示</dt><dd>研究启发的合成数据，非真实平台记录。不同话题持续4小时到28天，事件冲击叠加形成多峰。当前曝光率从零开始、回到零；累计曝光不会归零。日期区分独立的虚构故事实例。</dd></dl><a className="download" href="/guanchao-project-docs.zip" download><Download size={16}/>项目说明</a></section></div>}
+ const goLive=()=>{setFixedEnd(null);setDetailWindow(null);setEnter(null);player.live();};
+ const resetTuning=()=>{setTuning({...TUNING_DEFAULTS});clearTuning();};
+ const zoomTimeline=(requested,center=time)=>{const next=Math.max(60000,Math.min(RETENTION,requested)),nextEnd=Math.max(oldest+next,Math.min(edge,center+next/2));if(topic)setDetailWindow({end:nextEnd,span:next});else{setOverviewSpan(next);setFixedEnd(nextEnd);}};
+ return <>
+ {!snapshot?<main className="loading"><span className="loading-dot"/><h1>{status==='error'?'暂时无法连接':'正在汇聚此刻的讨论'}</h1><p>回声社区 · 模拟平台</p>{status==='error'&&<button onClick={retry}>重新连接</button>}</main>:
+  topic?<TopicPage topic={topic} time={time} edge={edge} oldest={oldest} events={allTopicEvents} detail={detail} status={status} player={player} reduced={reduced} enter={enter} tuning={tuning} replay={replay} onEntered={()=>setEnter(null)} onBack={back} onAbout={()=>setInfo(true)} onSeek={seek} onPan={pan} onZoom={zoomTimeline} onLive={goLive}/>:
+  <main className="main overview-page" style={{'--depart-ms':`${tuning.departMs}ms`}}><div className="page-content" key="overview">
+   <section className="panel bubble-panel">
+    <div className="overview-overlay"><button className="brand floating-brand" onClick={()=>{}} aria-label="返回话题总览"><span className="brand-mark"><i/><i/><i/></span><strong>观潮</strong></button>
+    <div className="search-wrap" onBlur={e=>{if(!e.currentTarget.contains(e.relatedTarget))setSearchOpen(false);}}><label className="search"><Search size={tuning.iconSearch} strokeWidth={tuning.iconStroke}/><input aria-label="搜索话题" placeholder="搜索话题" value={query} onFocus={()=>setSearchOpen(true)} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>e.key==='Escape'&&setSearchOpen(false)}/>{query&&<button aria-label="清空搜索" onClick={()=>setQuery('')}><X size={tuning.iconClear} strokeWidth={tuning.iconStroke}/></button>}</label>{searchOpen&&<div className="search-suggestions"><span>{query?'匹配话题':'此刻热议'}</span>{(query?filtered.slice().reverse():ranked.slice(0,4)).slice(0,6).map(q=><button key={q.id} onClick={e=>{setSearchOpen(false);openTopic(q.id,e.currentTarget.getBoundingClientRect());}}>{q.title}<ChevronRight size={tuning.iconChevron} strokeWidth={tuning.iconStroke}/></button>)}{query&&!filtered.length&&<p>试试“{topics.filter(q=>(values[q.id]?.views||0)>0).at(-1)?.title||'社区'}”</p>}</div>}</div></div>
+    <BubbleMap scrubbing={scrubbing} topics={shown} values={values} time={time} live={player.mode==='live'} cameraScope={query} onOpen={openTopic} departingId={departing}/>
+   </section>
+   <section className="panel flow-panel"><div className="section-heading"><h2>流量演化</h2><div className="chart-tools"><time className="playhead-time">{formatDateTime(time)}</time><button className={'live-button '+(player.mode==='live'?'active':'')} onClick={goLive}><Radio size={tuning.iconRadio} strokeWidth={tuning.iconStroke}/>{player.mode==='live'?'现在':'回到现在'}</button></div></div>
+    <div className="chart-box"><Timeline frames={data.frames} topics={chartTopics} time={time} end={end} span={span} onSeek={seek} onPan={pan} onZoom={zoomTimeline} wheelZoom onInteractionChange={setScrubbing}/></div>
+    <ViewportBar oldest={oldest} edge={edge} end={end} span={span} onPan={pan}/>
+   </section>
+  </div></main>}
+ {info&&<div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&setInfo(false)}><section className="about-modal" ref={infoRef} role="dialog" aria-modal="true" aria-labelledby="about-title"><button className="modal-close icon-button" aria-label="关闭说明" onClick={()=>setInfo(false)}><X size={tuning.iconModalClose} strokeWidth={tuning.iconStroke}/></button><h2 id="about-title">观潮 · 回声社区</h2><p>在一个虚构平台中，观察关注流向与观点转变。</p><dl><dt>空间与时间</dt><dd>气泡面积与每分钟曝光量成正比，半径取平方根。每分钟2万与4000的面积比为5:1。累计曝光低于500万的话题不进入观察台，同一时刻通常有8至23个话题。画布可缩放拖拽，不改变气泡之间的比例。</dd><dt>观点与词云</dt><dd>详情页的环形、条形与词云共用近1小时的舆论比例；选中观点会筛选模拟语料，词云和单词树从筛选后的文本重新计算。词云全部横向；单词树展示一个词的前后文。语料为确定性合成评论，不是真实用户发言。</dd><dt>持续变化</dt><dd>流量演化图就是全局时间控制。左键拖动图表定位时刻，滚轮缩放视野，底部滑动条平移时间轴，回到现在恢复实时跟随。120天历史随现在持续滚动。</dd><dt>课程演示</dt><dd>研究启发的合成数据，非真实平台记录。标题为虚构城市议题，流量按公开热搜热度分布校准。不同话题持续8到60小时，事件冲击叠加形成多峰。当前曝光率从零开始、回到零；累计曝光不会归零。</dd></dl><a className="download" href="/guanchao-project-docs.zip" download><Download size={tuning.iconDownload} strokeWidth={tuning.iconStroke}/>项目说明</a></section></div>}
+ {TUNING_ENABLED&&<React.Suspense fallback={null}><TuningPanel value={tuning} onChange={(key,value)=>setTuning(t=>({...t,[key]:value}))} onReset={resetTuning} onReplay={()=>setReplay(r=>r+1)}/></React.Suspense>}
  </>;
 }
 createRoot(document.getElementById('root')).render(<App/>);

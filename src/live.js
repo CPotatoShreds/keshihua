@@ -1,6 +1,13 @@
 import {useEffect,useRef,useState} from 'react';
 import {STEP,RETENTION,LIFE} from '../shared/catalog.js';
-export const EMPTY={views:0,counts:{m5:[0,0,0,0,0],h1:[0,0,0,0,0]}};
+export const EMPTY={views:0,counts:{m5:[0,0,0,0,0],h1:[0,0,0,0,0]},raw:{m5:[0,0,0,0,0],h1:[0,0,0,0,0]},emotions:{}};
+const zeros=()=>[0,0,0,0,0];
+const lerpArray=(a,b,u)=>{const x=a||zeros(),y=b||zeros();return x.map((v,i)=>v+((y[i]??v)-v)*u);};
+const lerpObject=(a,b,u)=>{
+ const out={};
+ for(const key of new Set([...Object.keys(a||{}),...Object.keys(b||{})])){const x=a?.[key]||0,y=b?.[key]||x;out[key]=x+(y-x)*u;}
+ return out;
+};
 export function mergeFeed(previous,message,replace=false){
  const prior=replace?null:previous;
  const all=new Map((prior?.frames||[]).map(f=>[f.seq,f]));for(const f of message.frames||[])all.set(f.seq,f);
@@ -9,13 +16,16 @@ export function mergeFeed(previous,message,replace=false){
  const events=new Map((prior?.events||[]).map(e=>[e.id,e]));for(const e of message.events||[])events.set(e.id,e);
  const firstRetained=sorted.findIndex(f=>f.time>=oldest);
  const boundaries=new Set([...topics.values()].flatMap(q=>[q.bornAt,q.endsAt]));for(const e of events.values())boundaries.add(e.time);
- return {frames:sorted.filter((f,i)=>f.time>=oldest&&(f.time>=latest-600000||f.time%3600000===0||boundaries.has(f.time)||i===firstRetained)),topics:[...topics.values()].filter(q=>q.endsAt+3600000>=oldest).sort((a,b)=>a.bornAt-b.bornAt),events:[...events.values()].filter(e=>e.time>=oldest).sort((a,b)=>a.time-b.time),retentionStart:message.retentionStart??previous?.retentionStart??latest-RETENTION,receivedAt:previous?.frames.at(-1)?.time===latest?previous.receivedAt:performance.now()};
+ return {frames:sorted.filter((f,i)=>f.time>=oldest&&(f.time>=latest-600000||f.time%3600000===0||boundaries.has(f.time)||i===firstRetained)),topics:[...topics.values()].filter(q=>q.endsAt+3600000>=oldest).sort((a,b)=>a.bornAt-b.bornAt),events:[...events.values()].filter(e=>e.time>=oldest).sort((a,b)=>a.time-b.time),retentionStart:message.retentionStart??previous?.retentionStart??latest-RETENTION,corpus:message.corpus??previous?.corpus??null,receivedAt:previous?.frames.at(-1)?.time===latest?previous.receivedAt:performance.now()};
 }
 export function sampleAt(frames,time){
  if(!frames.length)return {time,values:{}};
  let lo=0,hi=frames.length-1;while(lo<hi){const mid=Math.ceil((lo+hi)/2);if(frames[mid].time<=time)lo=mid;else hi=mid-1;}
  const a=frames[lo],b=frames[Math.min(lo+1,frames.length-1)],u=b.time===a.time?0:Math.max(0,Math.min(1,(time-a.time)/(b.time-a.time))),values={};
- for(const id of new Set([...Object.keys(a.values),...Object.keys(b.values)])){const x=a.values[id]||EMPTY,y=b.values[id]||EMPTY;values[id]={views:x.views+(y.views-x.views)*u,counts:Object.fromEntries(['m5','h1'].map(k=>[k,x.counts[k].map((c,j)=>c+(y.counts[k][j]-c)*u)]))};}
+ for(const id of new Set([...Object.keys(a.values),...Object.keys(b.values)])){
+  const x=a.values[id]||EMPTY,y=b.values[id]||EMPTY;
+  values[id]={views:x.views+(y.views-x.views)*u,counts:{m5:lerpArray(x.counts?.m5,y.counts?.m5,u),h1:lerpArray(x.counts?.h1,y.counts?.h1,u)},raw:{m5:lerpArray(x.raw?.m5,y.raw?.m5,u),h1:lerpArray(x.raw?.h1,y.raw?.h1,u)},emotions:lerpObject(x.emotions,y.emotions,u)};
+ }
  return {time,values};
 }
 export function matching(q,query){return query.trim().toLowerCase().split(/\s+/).every(t=>(q.title+' '+q.description+' '+q.tags.join(' ')).toLowerCase().includes(t));}

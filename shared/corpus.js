@@ -70,12 +70,14 @@ export function corpusFor(topic,time,{minutes=60,size=600}={}){
 }
 export function corpusTexts(texts,opinion=null){return opinion===null||opinion===undefined?texts:texts.filter(t=>t.cluster===opinion);}
 const isWord=token=>!!token&&token.length>=2&&token.length<=6&&!PUNCT.test(token)&&!STOP.has(token);
-export function corpusWords(texts,opinion=null,limit=28){
+export const isWordToken=isWord;
+export function corpusWords(texts,opinion=null,limit=28,{weighted=false}={}){
  const list=corpusTexts(texts,opinion),keywords=new Set(list.flatMap(t=>t.keywords||[])),counts=new Map();
  for(const text of list)for(const token of text.tokens||[]){
   if(!isWord(token))continue;
   const current=counts.get(token)||{word:token,value:0,clusters:new Map()};
-  current.value+=keywords.has(token)?1.8:1;
+  const contribution=weighted?1+Math.max(0,Math.min(100,Number(text.weight||0)))/50:1;
+  current.value+=contribution*(keywords.has(token)?1.8:1);
   current.clusters.set(text.cluster,(current.clusters.get(text.cluster)||0)+1);
   counts.set(token,current);
  }

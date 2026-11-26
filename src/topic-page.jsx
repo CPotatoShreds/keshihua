@@ -7,7 +7,7 @@ import {TopicStage} from './topic-stage';
 import {ViewportBar} from './viewport-bar';
 
 const ease=p=>p<.5?2*p*p:1-2*(1-p)*(1-p);
-export function TopicPage({topic,time,edge,oldest,events,detail,status,player,reduced,enter,tuning,replay=0,onEntered,onBack,onAbout,onSeek,onPan,onZoom,onLive}){
+export function TopicPage({topic,time,edge,oldest,events,detail,status,player,reduced,enter,tuning,replay=0,frames=[],corpus=null,onTuning,onEntered,onBack,onAbout,onSeek,onPan,onZoom,onLive}){
  const [progress,setProgress]=useState(enter?0:1),[hoverEvent,setHoverEvent]=useState(null),[pinnedEvent,setPinnedEvent]=useState(null),entered=useRef(onEntered);
  entered.current=onEntered;
  useEffect(()=>{if(!enter||reduced){setProgress(1);return;}const chartEase=tuning.chartEase==='cubic'?[.22,.8,.24,1]:tuning.chartEase;const controls=animate(0,1,{duration:tuning.chartMs/1000,ease:chartEase,onUpdate:setProgress,onComplete:()=>entered.current?.()});return()=>controls.stop();},[enter,reduced,tuning.chartMs,tuning.chartEase]);
@@ -42,11 +42,12 @@ export function TopicPage({topic,time,edge,oldest,events,detail,status,player,re
    <h1>{topic.title}</h1>
    <div className="topic-header-right">
     <span className={'connection '+(status==='connected'?'online':'')}><i/>{status==='connected'?'持续更新':status==='reconnecting'?'正在重连':status==='error'?'连接暂不可用':'正在连接'}</span>
+    <span className={'corpus-status '+(corpus?.status==='live'?'online':'')}>{corpus?.status==='live'?'语料实时':corpus?.status==='offline'?'语料源离线':'语料接入中'}</span>
     <button className="icon-button" aria-label="关于观潮" onClick={onAbout}><Info size={tuning.iconInfo} strokeWidth={tuning.iconStroke}/></button>
    </div>
   </header>
   <div className="page-content topic-content">
-   <TopicStage topic={topic} time={stageTime} reduced={reduced} enter={enter} tuning={tuning} replay={replay}/>
+   <TopicStage topic={topic} time={stageTime} frames={frames} corpus={corpus} reduced={reduced} enter={enter} tuning={tuning} replay={replay} onTuning={onTuning}/>
    <section className="topic-chart">
     <div className="topic-chart-head">
      <h2>话题流量</h2><span className="topic-chart-hint">拖动定位 · 滚轮缩放 · 底部平移</span>

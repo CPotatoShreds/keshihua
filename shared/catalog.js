@@ -106,7 +106,7 @@ export const templates=definitions.map((d,i)=>({key:'t'+i,title:d[0],cityTitle:d
 // Deterministic instance space: 40 story archetypes x 80 cities = 3200 unique titles.
 export const cities=['北京','上海','天津','重庆','石家庄','太原','沈阳','大连','长春','哈尔滨','南京','苏州','无锡','杭州','宁波','温州','合肥','福州','厦门','南昌','济南','青岛','郑州','武汉','长沙','广州','深圳','佛山','东莞','南宁','海口','成都','绵阳','贵阳','昆明','拉萨','西安','兰州','西宁','银川','乌鲁木齐','呼和浩特','唐山','保定','洛阳','襄阳','宜昌','岳阳','赣州','泉州','珠海','中山','惠州','汕头','常州','南通','徐州','绍兴','嘉兴','金华','潍坊','烟台','淄博','芜湖','扬州','盐城','泰州','台州','湖州','株洲','临沂','济宁','邯郸','包头','大同','桂林','柳州','三亚','遵义','曲靖'];
 
-export const STEP=5000,DAY=86400000,RETENTION=120*DAY,INTERVAL=DAY,LIFE=4*DAY,SLOT=90*60000;
+export const STEP=5000,DAY=86400000,RETENTION=7*DAY,INTERVAL=DAY,LIFE=4*DAY,SLOT=90*60000;
 // Cumulative exposures below this threshold are not admitted to the space.
 export const MIN_VIEWS=5_000_000,HEAT_SCALE=25;
 // Max heat per unique title in a public 2021-03..09 Weibo hot-search archive (nicearrack/weibo-hot-search, MIT).

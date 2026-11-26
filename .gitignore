@@ -3,3 +3,6 @@ dist/
 .taste-skill/
 *.tar.gz
 public/__qa.html
+corpus/out/
+corpus/out-test/
+server/.data/

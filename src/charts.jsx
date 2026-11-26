@@ -104,10 +104,10 @@ export function Timeline({frames,topics,time,end,span,onSeek,onPan,onZoom,kind='
  </div>;
 }
 
-export function OpinionBars({topic,counts,selected,onSelect,hovered=null,onHover}){
+export function OpinionBars({topic,counts,raw=null,selected,onSelect,hovered=null,onHover}){
  const total=counts.reduce((a,b)=>a+b,0),max=Math.max(1,...counts);
  const order=topic.clusters.map((c,i)=>({...c,index:i})).sort((a,b)=>counts[b.index]-counts[a.index]);
- return <div className="opinion-bars">{topic.clusters.map((c,index)=>({...c,index})).map(c=><button style={{transform:`translateY(${order.findIndex(q=>q.index===c.index)*57}px)`}} key={c.id} className={'opinion-row '+(selected===c.index?'selected ':'')+(hovered===c.index?'hovered':'')} aria-pressed={selected===c.index} onPointerEnter={()=>onHover?.(c.index)} onPointerLeave={()=>onHover?.(null)} onFocus={()=>onHover?.(c.index)} onBlur={()=>onHover?.(null)} onClick={()=>onSelect(selected===c.index?null:c.index)}><span className="bar-label"><i style={{background:c.color}}/>{c.title}<strong>{number(counts[c.index])}<small>{(counts[c.index]/Math.max(1,total)*100).toFixed(1)}%</small></strong></span><span className="bar-track"><span style={{width:counts[c.index]/max*100+'%',background:c.color,opacity:selected===null||selected===c.index||hovered===c.index?1:.3}}/></span></button>)}</div>;
+ return <div className="opinion-bars">{topic.clusters.map((c,index)=>({...c,index})).map(c=><button style={{transform:`translateY(${order.findIndex(q=>q.index===c.index)*57}px)`}} key={c.id} className={'opinion-row '+(selected===c.index?'selected ':'')+(hovered===c.index?'hovered':'')} aria-pressed={selected===c.index} title={`${c.title} · 加权影响力 ${number(counts[c.index])} · 讨论量 ${number(raw?.[c.index]||0)}`} onPointerEnter={()=>onHover?.(c.index)} onPointerLeave={()=>onHover?.(null)} onFocus={()=>onHover?.(c.index)} onBlur={()=>onHover?.(null)} onClick={()=>onSelect(selected===c.index?null:c.index)}><span className="bar-label"><i style={{background:c.color}}/>{c.title}<strong>{number(counts[c.index])}<small>{(counts[c.index]/Math.max(1,total)*100).toFixed(1)}%</small></strong></span><span className="bar-track"><span style={{width:counts[c.index]/max*100+'%',background:c.color,opacity:selected===null||selected===c.index||hovered===c.index?1:.3}}/></span></button>)}</div>;
 }
 
 export function WordCloud({topic,counts,selected,onWord,word}){

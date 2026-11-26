@@ -1,85 +1,180 @@
-# v13 数据、公式与研究依据
+# v14 数据、公式与研究依据
 
-## 指标
+## 1. 架构与边界
 
-气泡/流量图编码新增曝光率（曝光/分钟）。曝光不是去重人数，也不是用户主动进入内容后的浏览。累计曝光不能减少，因此话题消亡归零指当前曝光率。所有数字是合成数据，不混合第三方热度，不声称反推真实曝光。
+```
+外部生产者 corpus/  --/feed-->  系统 server/  --SSE-->  前端 src/
+ 全量文本 + 预计算聚合          聚合 + 最近文本缓存        渲染
+```
 
-固定公式：r=100*sqrt(rate/100000)，r是世界坐标。πr²正比于rate。每分钟2万与4000的面积比为5，半径比sqrt(5)≈2.236；半径线性会把面积差夸大为25倍。不做对数压缩、当前最大值归一化或数据半径上限。所有圆使用统一相机平移缩放。小圆命中范围可扩大但不可见，不伪造面积。汇流粒子暂时关闭。
+- **外部生产者**：独立进程、独立端口（默认 5400），持有约 700 万条预生成文本；提供 `/feed`、`/texts`、`/aggregates`、`/health`、`/control`。
+- **系统**：只持久化话题元数据、5 分钟/1 小时聚合和最近窗口文本；历史文本向生产者按需查询。重启从 `server/.data/hourly.ndjson` 恢复。
+- **数据所有权**：生产者是“平台侧”的模拟，系统是“观察台”。文本语料不进入系统快照；快照只含话题、帧、事件和聚合状态。
 
-依据：D3官方 [scaleRadial](https://d3js.org/d3-scale/linear) 规定输入线性对应输出半径的平方。
+所有时间 epoch 毫秒，显示 Asia/Shanghai。所有内容为合成数据，不接真实平台、不爬取、不冒充真实记录。
 
-## 真实热搜口径
+## 2. 话题模型（7 天）
 
-公开资料与同行评议研究给出了可用的量级：
+- 40 个虚构城市议题原型 × 80 座城市 = 3200 个唯一标题，按 `slot×977 mod 3200` 置换分配；7 天窗口内不重复。
+- 每 90 分钟一个新话题（约 16 个/天）；累计曝光低于 500 万不入库；同时在榜实测 8–23 个。
+- 寿命 8–60 小时，对数均匀；5 个 Beta 形脉冲叠加，起点比例 0、.13、.29、.48、.70；解析积分 `∫ rate dt = 累计曝光`。
+- 话题对象：`id, slot, archetype, key, title, city, bornAt, endsAt, pulses[5], clusters[5], color, tags, description, eventTitles, simulation`。
+- `pulses` 只负责曝光率 `views`；**不再用 `discussionRatio` 生成观点计数**。
+- `RETENTION = 7 × DAY`。7 天前的话题、帧、事件、聚合与语料全部清理。
 
-- 微博热搜主榜固定50条，页面约10分钟刷新；2021-08-23公布的规则为“热度=(搜索热度+讨论热度+传播热度)×互动率”，互动是乘数。热度值量级从数十万到数百万，官方未公布阈值或上限。来源：[规则报道](https://www.360kuai.com/pc/9e944d099c49f196f)、[榜单页](https://s.weibo.com/top/summary)。
-- 单条话题规模：中腰部常见1–3亿阅读、数十万讨论；头部事件可达数十亿阅读。第三方镜像同日热度示例：榜首约101万，末位约15万（2026-11-15）。
-- 在榜寿命：Cui & Kertész (2021) 统计微博热搜的中位寿命约3.2–4.0小时，多数类别不超过3.5小时，长尾可达数天。[论文](https://arxiv.org/abs/2008.04418)、[DOI](https://doi.org/10.1140/epjds/s13688-021-00263-0)。
-- 衰减：Wu & Huberman (2007) 的拉伸指数衰减、Szabo & Huberman (2008) 的前两小时可预测性、Yang & Leskovec (2011) 的六类时序形态；本模型继续使用多峰Beta核叠加。
+曝光率：`u=(t-at)/duration`，`0<u<1` 时 `A·u^a·(1-u)^b / (m^a(1-m)^b)`，`m=a/(a+b)`；区间外为零。a、b 为整数，多项式原函数给出窗口精确积分。气泡半径 `r=100·sqrt(rate/100000)`，面积正比于每分钟曝光。
 
-本版还抓取并解析了公开存档 [nicearrack/weibo-hot-search](https://github.com/nicearrack/weibo-hot-search)（MIT，2021-03-01至2021-09-10，56,267条在榜记录、46,036个唯一标题）用于校准热度分位数与标题句式。存档由真实热搜标题构成，但以娱乐与敏感事件为主；为保持“虚构单平台”的设定并避免真实人物与伤亡内容，正式话题标题采用按真实句式生成的虚构城市议题，而不是逐字复用存档标题。流量全部为合成值。
+## 3. 文本记录契约
 
-热度分位数（每个唯一标题的历史最高热度，用于本模型的热度抽样）：
+```js
+{
+  id, topicSlot, archetype,
+  layer: 'post' | 'comment' | 'reply',
+  parentId, rootId,
+  time, author,                       // author 仅展示 handle
+  cluster: 0..4,                      // 现有 5 类观点
+  emotion: 'e0'..'e20' | 'e21',       // DUTIR 21 小类 + 无显著情绪
+  intensity: 1 | 3 | 5 | 7 | 9 | 0,   // DUTIR 五级；neutral 为 0
+  text, tokens[], keywords[],
+  metrics: {
+    views?, likes, reposts?, comments?,   // 主帖
+    replies?, impressions?, position?     // 评论/回复；后两者 internal
+  },
+  weight                                // 生产者侧参考值；系统会用原始指标重算
+}
+```
 
-| 分位 | 0 | 25% | 50% | 75% | 90% | 99% | 上限 |
-|---|---|---|---|---|---|---|---|
-| 热度 | 15万 | 30万 | 49.3万 | 86.4万 | 165.5万 | 490.8万 | 2000万 |
+父级规则：主帖 `parentId=null, rootId=id`；评论挂在主帖；回复挂在评论。`comments`/`replies` 由子节点数回填，保证层级一致。
 
-## 生成模型
+## 4. 指标与可见性
 
-每个话题生成参数：
+| 指标 | 主帖 | 评论 | 回复 | 公开 |
+|---|---|---|---|---|
+| 浏览/曝光 | 有（话题曝光分摊） | 内部潜变量 | 内部潜变量 | 评论/回复不公开 |
+| 点赞 | 有 | 有 | 有 | 是 |
+| 转发/分享 | 有 | 无 | 无 | 是 |
+| 评论数 | 有 | — | — | 是 |
+| 回复数 | — | 有 | 无 | 是 |
+| 文本层级 | 有 | 有 | 有 | 是 |
+| 作者 | handle | handle | handle | 是；无粉丝/认证 |
 
-- 热度 H：在上述分位数之间按对数线性插值抽样。
-- 累计曝光 V：`V = 25 × H`。25是经验系数，用来把榜单热度映射到阅读/曝光量级（例：H=49.3万约对应1232万累计曝光；H=165.5万约对应4138万），不是微博官方公式。
-- 寿命 D：8至60小时的对数均匀分布，中位约22小时、均值约26小时。只保留高于阈值的高热度子集，因此寿命长于全量榜单的中位3–4小时；长尾到2.5天。
-- 事件核：沿用5个Beta形脉冲，起点比例为0、.13、.29、.48、.70；所有脉冲的振幅统一缩放，使解析积分 `∫ rate dt = V`。界面显示的每分钟曝光率是这条曲线的瞬时值。
-- 讨论比例：累计曝光的0.15%–0.6%，乘以每条脉冲的观点权重得到5类讨论数。
-- 入库阈值：`MIN_VIEWS = 5,000,000` 累计曝光。低于该值的话题不进入快照、帧和事件流。
-- 到达节奏：每90分钟生成一个新话题（约16个/天）。40个原型按固定间隔轮转，同一原型不会同时在榜。实测120天内同时共存8–23个话题，平均约16个；气泡区只展示这个可读子集，不模拟完整50条榜单。
-- 实测峰值率：中位约1.7万/分钟，90分位约6.8万/分钟，99分位约28万/分钟，最高约82万/分钟。单个中位话题的累计曝光约1200万，头部话题可达数亿。
+**为什么评论浏览量不公开**：评论是懒加载、按热度重排、楼中楼可折叠的；一条评论被看到取决于排名位置与滚动深度，同一条评论对不同用户的“曝光”差异极大。平台内部可以做曝光埋点（排序、创作者分析），但公开的“浏览量”既不稳定也会暴露排序机制。故只作内部潜变量，用于点赞率校正；`impressions`/`position` 在公共 API 中剥离。
 
-唯一性：40个现实议题原型 × 80座城市 = 3200个组合，按 `slot×977 mod 3200` 的置换分配，120天窗口内不重复；每个标题只出现一次。同一原型两次出现至少相隔60小时（原型数×90分钟），不小于最长寿命，因此不会同时在榜。事件标题为“城市+原型事件”，全库唯一。这样解决了旧版24个模板按天循环、同一标题反复出现的问题。
+**为什么帖与评不能共用一套指标**：主帖分母是浏览，评论分母是曝光；主帖有转发，评论有楼中楼；两者量级与长尾形态不同。直接相加会把“曝光位置”误当成“内容影响力”。
 
-## 文本语料、观点筛选与词树
+## 5. 情绪本体（DUTIR）
 
-- 详情页的环形与条形使用 `aggregate(topic,time,60)` 的 5 类计数（近1小时）。
-- 词云和单词树来自 `shared/corpus.js` 的确定性模拟文本：按当前观点计数比例生成约600条/小时的样本，每条包含观点类别、时间和预分词 tokens；以 `topic.id + 分钟` 缓存，不进入快照。
-- 选中观点时按 cluster 过滤文本，词云重新统计筛选文本的词频，因此不会退化成每类固定3个词；单词树也从筛选文本构建。
-- 单词树根词居中：左侧前缀树、右侧后缀树；桌面最多2层、移动1层；每节点最多5个分支、总节点约56；频次低于3的分支剪枝；叶端示例展示完整句子。文本全部水平。
-- 语料是合成评论，界面标注“模拟语料”；事件节点仍来自话题的5个事件，详情底部图以图上标记和悬浮卡显示。旧事件轨道、观点河流、旧词云和评论区块已移除。
+采用大连理工大学情感词汇本体库的 7 大类 21 小类，另加“无显著情绪”：
 
-## 生命周期与公式
+- 乐：快乐、安心
+- 好：尊敬、赞扬、相信、喜爱、祝愿
+- 怒：愤怒
+- 哀：悲伤、失望、疚、思
+- 惧：慌、恐惧、羞
+- 恶：烦闷、憎恶、贬责、妒忌、怀疑
+- 惊：惊奇
 
-每个话题5个事件峰。u=(t-at)/duration，0<u<1时核为 A*u^a*(1-u)^b/(m^a*(1-m)^b)，m=a/(a+b)，区间外为零。所有峰相加得每分钟曝光率。a,b为整数，多项式原函数给出窗口精确积分；每峰带观点权重，积分乘讨论比例得到5类讨论数量。
+每条文本单标签 + 强度（1/3/5/7/9；neutral 0）。5×22 的条件分布定义在 `shared/dutir.js`：受影响观点更偏愤怒/失望，相关方更偏怀疑/贬责，期待观点更偏祝愿/相信，支持观点更偏赞扬/喜爱，其他观点更偏思/怀疑。外环显示 Top 8 小类 + 其他；21 小类用于筛选与列表标签。DUTIR 覆盖了 Ekman/NRC/七情无法区分的“期盼（祝愿）”与“致敬（尊敬）”。
 
-事件起点比例0、.13、.29、.48、.70，峰持续时间、幅度、形状各异，支持回应后再升温；寿命为8至60小时。现实话题“消亡”通常是低于观察阈值，不保证永远为零。有限终点与Beta形核是为课程演示而选的模型，不是论文原公式，也不是现实预测。
+## 6. 分层权重
 
-研究启发：
+```
+主帖：  er = (likes + 2·reposts + 1.5·comments) / max(views,1)
+        n = views;         prior = .02;   C = 1000
+评论：  er = likes / max(impressions,1) + .002·log1p(replies)
+        n = impressions;   prior = .006;  C = 200
+回复：  同评论;                              C = 100
 
-- Crane & Sornette (2008), *Robust dynamic classes revealed by measuring the response function of a social system*：[预印本](https://arxiv.org/abs/0803.2189)，DOI 10.1073/pnas.0803685105。近500万视频日浏览序列，讨论内外部冲击后的不同衰减动态；启发急爆、慢降。
-- Hu et al. (2017), *Predicting Key Events in the Popularity Evolution of Online Information*：[PLOS ONE](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0168749)。爆发、峰值、衰退及单峰/多峰演化；启发事件核叠加。
-- Yang & Leskovec (2011), *Patterns of Temporal Variation in Online Media*：[作者存档](https://snap.stanford.edu/class/cs224w-readings/yang11memeshapes.pdf)。不同内容增长与衰退形态。
+shrunk = (C·prior + er·n) / (C + n)
+rel    = shrunk / prior
+base   = clamp((log2(rel)+2)/4, 0, 1)
+weight = round(100 · base · layerCoef)
+layerCoef: 主帖 1.0，评论 .85，回复 .7
+```
 
-## 契约
+- `rel=0.25`→0，`1`→50，`≥4`→100；样本不足（主帖 <5,000 浏览、评论 <100 曝光、回复 <50）标“样本不足”，但仍参与聚合。
+- 环形/条形用 `Σweight`；词云用 `Σ(1+weight/50)`；讨论列表按 `weight desc`。原始计数另存，tooltip 同时显示“加权影响力”与“讨论量”。
+- 这是课程演示的设计选择，不是任何平台的官方公式；公开可引用的排序公式（HN gravity、Reddit hot、Wilson、贝叶斯平均）只作为方法参考。
 
-Topic：id, template字段(title,description,tags,color,cityTitle,clusters,eventTitles),city,title,description,bornAt,endsAt,amplitude,discussionRatio,pulses,simulation=true,ceilings。
-Pulse：at,duration,amplitude,a,b,opinion[5]。
-Frame：seq=time/5000,time,values[id]={views:曝光率,counts:{m5:5类,h1:5类}}。
-Event：id,topicId,time,title,kind,body。只传已发生事件，界面再按观看时间过滤。所有时间epoch毫秒，显示Asia/Shanghai。
-Snapshot：serverTime,step,retention,retentionStart,model,topics,frames,events。文本语料不进入快照，由前端用 `shared/corpus.js` 按 topic/time 确定性生成；环形/条形计数仍来自快照帧的聚合。
+## 7. 聚合与帧
 
-rateAt(q,t)返回当前曝光/分钟；aggregate(q,t,minutes)返回窗口曝光总量views与讨论counts；valuesAt返回当前rate和两组窗口讨论数。传输数字四舍五入，前端解析采样保持连续小数。
+系统摄取每条文本时重算权重，写入三层桶：
 
-## 传输与采样
+- 5 秒桶：内存，最近 10 分钟；用于 `m5`。
+- 5 分钟桶：内存，最近 2 小时；用于 `h1`。
+- 1 小时桶：持久化，7 天；用于历史与回填。
 
-120天窗口内约1750个话题、8700条事件，快照约5.4MB；帧只发送最近10分钟的5秒帧（120帧），不再发送120天的小时帧——前端的气泡值和两张时间图都由共享合成模型精确取样，历史帧并未参与渲染。retentionStart随快照/增量下发，用于时间轴裁剪。
+帧：`{seq, time, values:{topicId:{views, counts:{m5,h1}, raw:{m5,h1}, emotions}}}`。`views` 来自 `rateAt`；`counts` 为加权计数；`raw` 为原始条数；`emotions` 为加权情绪计数（近 1 小时）。
 
-SSE每5秒推送，seq排序去重、Last-Event-ID续传，超1小时断线重新快照。客户端压缩老细帧回小时/节点，避免长期打开无限累积。实时约5秒缓冲，观看时钟逐帧连续推进。总览气泡最多显示当前曝光最高的14个话题，其余可搜索定位；总览流量图只绘制可见视野内峰值最高的24个话题，避免上千条路径；详情图始终只看当前话题。
+小时聚合行：`{topicSlot, archetype, hour, weighted[5], raw[5], emotions{id:weight}}`。5 分钟聚合行：`{topicSlot, archetype, bucket, weighted, raw, emotions}`。
 
-流量图约每3像素一个时间桶；桶大于1分钟时用此前桶长度的平均速率（积分除桶宽），避免小时热点被中心单点漏采。窄视野显示瞬时速率。图表区间均值与气泡时刻率不同，tooltip明确标注。极小话题仍可能小于一像素，可放大或搜索。
+启动回填：读 `hourly.ndjson` 与生产者 `/aggregates?step=5m`（最近 2 小时，跳过当前 5 分钟桶），再从当前 5 分钟起点以 100× 追赶到现在，之后 1× 实时。生产者断线时保留缓存并在 5 秒后重连。
 
-讨论为真实5分钟/1小时积分，不重复叠加重叠窗口。实际平台接入时需用历史查询与多分辨率聚合接口替换合成模型；本版不是生产后端。
+## 8. 语料生产
 
-## 气泡空间与数据口径
+- 7 天滚动窗口，110 个入库话题，**实测 7,000,000 条**（1,525 主帖 / 6,305,475 评论 / 693,000 回复）；峰值约 300 条/秒，1 天约 100 万条。
+- 层级：每话题 8–24 个主帖（约占 0.02%），评论约 90%，回复约 10%；评论按 `views^1.15` 分配到主帖，回复按可见性分配到评论。
+- 时间：按话题曝光率曲线 × 中国时区昼夜倍率（22:00 峰、04:00 谷，峰谷比约 18×）抽样；主帖在生命周期内分布，评论不早于主帖，回复不早于评论。
+- 观点：按当前活跃脉冲的 `opinion[5]` 抽样；情绪：按 5×22 矩阵条件抽样。
+- 指标：主帖浏览按 `0.55^i` 幂律分摊话题累计曝光；点赞率对数正态；转发约为点赞的 5%–40%。评论/回复曝光 = 主帖浏览 × 打开评论区比例 × 位置幂律；点赞按曝光 × 重尾点赞率；回复数按泊松/可见性分配。
+- 文本：组合式句式库（40 原型 × 5 观点 × 3 层 + 22 情绪短语 + 连接词 + 200 条原型专属句），槽位填充城市/标题/关键词/情绪词；确定性 RNG（FNV-1a + Mulberry32）。禁止真实人物、事件、机构。
+- 文件：`corpus/out/topics/<slot>.ndjson.gz`（每话题按时间排序）、`manifest.json`、`aggregates/hourly.ndjson`、`aggregates/by5m.ndjson`。`out/` 不入 git；全量 **552MB gzip**（约 1.6GB raw），最大话题 343,271 条。
+- 构建：`npm run corpus:build`；快速开发 `node corpus/build.js --days 1 --total 20000`。
 
-布局只使用所选时刻的流量半径，不读取生命周期峰值或未来脉冲参数预留占位。位置松弛和缩放镜头不改变每个圆的面积比例。位置运动使用独立墙钟，历史时间拖动不把时间步长直接当成物理步长；标签与水滴仍与对应话题绑定。
+### 校准比例
+
+- 热门话题原创:评论:转发约 1:1–3:2–4；平台整体转发约是原创的 4 倍（Weibo-COV）。本模型按话题内 主帖:评论 约 1:数百、点赞远高于评论/转发。
+- 评论点赞重尾：小话题中零赞比例高；全量语料的长尾大多为 0 赞，可见的前几条承担主要权重。这是位置偏置的真实形态。
+- 昼夜峰值/低谷约 18×；早餐/午餐有小峰。
+
+## 9. API 契约
+
+- `GET /api/snapshot`：`serverTime, step, retention, retentionStart, model:'synthetic-corpus-v1', topics, frames, events, corpus`。
+- `GET /api/stream`：SSE 5 秒，`Last-Event-ID` 续传；帧同上。
+- `GET /api/topic/:id/history`：`{rows:[{hour,time,views,weighted,raw,emotions}]}`。
+- `GET /api/topic/:id/texts?from&to&opinion&emotion&layer&limit&sort`：样本文本（含 tokens，剥离 impressions/position）。
+- `GET /api/topic/:id/words?from&to&opinion&emotion&limit`：加权词表 + 样本文本。
+- `GET /api/topic/:id/discussion?from&to&opinion&emotion&sort&cursor&limit`：主帖分页 + 评论/回复树。界面默认回溯 **6 小时**，因为主帖在话题生命周期内稀疏分布；词云仍用近 1 小时窗口。
+- `GET /api/corpus/status`：生产者连接、回填数量、错误。
+- 生产者内部：`GET /health`、`/manifest`、`/feed?from&speed&catchup`、`/texts`、`/aggregates?step=5m`、`POST /control`。
+
+## 10. 研究依据
+
+平台指标与可见性：
+
+- 微博开放平台 `statuses/show`：`reposts_count`、`comments_count`、`attitudes_count`，无公开评论阅读数；`favorited` 是“我是否收藏”的布尔值。https://open.weibo.com/wiki/2/statuses/show
+- 微博阅读数定义（全平台被看到的次数）；公开可见性随内容状态变化。https://weibo.com/2016713117/M68Y0cveu
+- 微博热搜规则（2021-08-23）：热度=(搜索热度+讨论热度+传播热度)×互动率；官方未公布权重与阈值。https://www.163.com/dy/article/GI638TEE0552FHQX.html
+- B 站视频 `stat` 同时给出 view/danmaku/reply/favorite/coin/share/like；评论热度排序不等于纯点赞（同视频高赞评论可能排在较低赞之后）。https://api.bilibili.com/x/web-interface/view?bvid=BV1GJ411x7h7 、https://api.bilibili.com/x/v2/reply?type=1&oid=80433022&sort=2&ps=5
+- 知乎问题公开关注者/被浏览/回答数；回答公开赞同/评论/收藏/喜欢，反对数不公开；浏览量为作者侧数据。https://www.zhihu.com/creator
+- 贴吧标准界面公开回复数、楼层赞、楼中楼回复；点击量仅旧版/控制台可见。
+- 抖音播放量主要在创作者中心；快手公开播放；B 站公开播放/弹幕/投币。https://creator.douyin.com/ 、https://m.zol.com.cn/article/10284161.html
+
+情感本体：
+
+- 徐琳宏、林鸿飞等，《情感词汇本体的构造》，情报学报 2008, 27(2):180-185；DUTIR 资源页 http://ir.dlut.edu.cn/info/1013/1142.htm （21 小类、五级强度、极性；科研教学使用）。
+- GoEmotions（27 类 + neutral，Reddit 评论）：https://arxiv.org/abs/2005.00547
+- NRC Emotion Lexicon（Plutchik 8 维）：https://saifmohammad.com/WebPages/NRC-Emotion-Lexicon.htm
+
+比例与排序：
+
+- Weibo-COV：8,284,992 条原创 / 40,893,953 条总量；CHECKED：2,104 帖 → 1,185,702 评论、1,868,175 转发；SAGraph：评论:转发 = 2.35:1。https://arxiv.org/abs/2005.09174 、https://arxiv.org/abs/2010.09029 、https://arxiv.org/abs/2403.15105
+- Hacker News gravity：`score=(P-1)/(T+2)^1.8`；Reddit hot：`log10(max(|s|,1))+sign(s)·(t-1134028003)/45000`；Wilson 下界与贝叶斯平均用于小样本收缩。https://raw.githubusercontent.com/wting/hackernews/master/news.arc 、https://github.com/reddit-archive/reddit/blob/master/r2/r2/lib/db/_sorts.pyx 、https://www.evanmiller.org/how-not-to-sort-by-average-rating.html
+- 重尾检验不应只看 log-log 直线；Clauset et al. 建议 MLE + KS + 似然比。https://arxiv.org/abs/0706.1062
+
+生命周期与热度分位：
+
+- 热度分位：15 万 / 30 万 / 49.3 万 / 86.4 万 / 165.5 万 / 490.8 万 / 2000 万（公开热搜存档 nicearrack/weibo-hot-search，MIT，2021-03 至 2021-09）。
+- 累计曝光 `V=25×H` 为经验映射，不是官方公式。
+- 多峰与衰减：Crane & Sornette (2008) https://arxiv.org/abs/0803.2189 ；Hu et al. (2017) https://doi.org/10.1371/journal.pone.0168749 ；Yang & Leskovec (2011) https://snap.stanford.edu/class/cs224w-readings/yang11memeshapes.pdf 。
+- 热搜寿命：Cui & Kertész (2021) https://doi.org/10.1140/epjds/s13688-021-00263-0 。
+
+未公开/不可验证：知乎是否在生产中使用 Wilson；微博/知乎/贴吧/抖音/快手/B 站的具体排序权重；所有平台评论曝光；抖音播放阈值；完播率定义。文档中这些均标注为“设计选择”或“估计”，不冒充官方口径。
+
+## 11. 限制
+
+- 语料是合成抽样：绝对速率按真实平台抽样比缩放，帖:评:回复比例与赞/浏览比保持真实；不是完整平台流量。
+- 700 万条会产生句式重复；用槽位/结构变体/原型分布缓解，词云不受影响。
+- 全链路加权改变环形含义：它表示“互动加权影响力占比”，不是讨论量占比；tooltip 同时给原始讨论量。
+- 7 天保留删除了多月历史；`RETENTION` 常量可扩展。
+- 生产 Worker 无外部生产者时使用分析回退，文本相关功能不可用。

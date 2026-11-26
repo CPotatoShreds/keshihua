@@ -6,6 +6,8 @@ export const TUNING_DEFAULTS={
  bubbleFactor:.40,cloudFactor:.86,cloudMax:28,cloudMinFont:11,cloudMaxFont:28,cloudGap:6,
  titleFont:.115,titleMin:14,titleMax:21,titleValueFont:11,
  ringGap:8,ringThick:18,ringCorner:4,ringPad:.012,ringHot:4,ringStroke:1.5,
+ emotionRingGap:6,emotionRingThick:10,emotionRingCorner:3,emotionRingPad:.008,emotionHot:3,emotionRingStroke:1,emotionTop:8,
+ textWindow:60,wordSample:1200,discussionWindow:6,discussionPage:20,discussionSort:'hot',
  bubbleFill:.16,bubbleStroke:.5,bubbleStrokeW:2,
  chartMs:1050,chartEase:'cubic',focusEnd:.28,domainStart:.14,domainSpan:.56,fadeStart:.48,fadeSpan:.34,focusStroke:1.4,
  stageL:1.15,stageR:.85,stageGap:20,panelMin:300,
@@ -18,10 +20,10 @@ export const TUNING_DEFAULTS={
  headerFadeDelay:300,headerFadeDur:400,panelFadeDelay:550,panelFadeDur:450,
  treeRowGap:24,treeCompactRow:20,treeColMax:84,treeCompactCol:52,
  treeMaxNodes:56,treeCompactNodes:28,treeDepth:2,treeCompactDepth:1,
- treeMinCount:3,treeBranches:5,treeFont:12,treeCompactFont:11,treeChars:0,
+ treeMinCount:2,treeBranches:5,treeFont:12,treeCompactFont:11,treeChars:0,
  iconStroke:2,iconSearch:16,iconClear:13,iconChevron:12,iconBack:18,iconInfo:17,iconRadio:13,iconDownload:16,iconModalClose:18
 };
-const KEY='guanchao-tuning-v1';
+const KEY='guanchao-tuning-v2';
 export function loadTuning(){try{const raw=localStorage.getItem(KEY);return raw?{...TUNING_DEFAULTS,...JSON.parse(raw)}:{...TUNING_DEFAULTS};}catch{return {...TUNING_DEFAULTS};}}
 export function saveTuning(value){try{localStorage.setItem(KEY,JSON.stringify(value));}catch{}}
 export function clearTuning(){try{localStorage.removeItem(KEY);}catch{}}

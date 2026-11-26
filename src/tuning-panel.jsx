@@ -41,6 +41,13 @@ const GROUPS=[
   R('ringPad','环形分段间隙',0,.05,.002,'弧度'),
   R('ringHot','悬浮 / 选中外扩',0,12,1,'px'),
   R('ringStroke','环形分段描边',0,4,.5,'px'),
+  R('emotionRingGap','情绪环与观点环间隙',0,24,1,'px'),
+  R('emotionRingThick','情绪环厚度',4,24,1,'px'),
+  R('emotionRingCorner','情绪环圆角',0,12,1,'px'),
+  R('emotionRingPad','情绪环分段间隙',0,.04,.002,'弧度'),
+  R('emotionHot','情绪环选中外扩',0,10,1,'px'),
+  R('emotionRingStroke','情绪环描边',0,4,.5,'px'),
+  R('emotionTop','外环显示情绪数',3,12,1,'类'),
   R('bubbleFill','圆底色透明度',0,.5,.01,''),
   R('bubbleStroke','圆描边透明度',0,1,.05,''),
   R('bubbleStrokeW','圆描边宽度',0,5,.5,'px')
@@ -104,6 +111,13 @@ const GROUPS=[
   R('treeFont','桌面字号',9,16,1,'px'),
   R('treeCompactFont','窄屏字号',9,14,1,'px'),
   R('treeChars','每词最多字数（0=自动）',0,10,1,'字')
+ ]],
+ ['语料 / 讨论',[
+  R('textWindow','文本窗口',5,180,5,'分钟'),
+  R('wordSample','词云抽样文本',100,2000,50,'条'),
+  R('discussionWindow','讨论回溯窗口',1,24,1,'小时'),
+  R('discussionPage','讨论每页主帖',5,40,5,'个'),
+  S('discussionSort','讨论默认排序',[['hot','热度'],['time','时间']])
  ]],
  ['图标',[
   R('iconStroke','图标线宽',1,3,.25,''),
